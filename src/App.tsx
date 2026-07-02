@@ -38,6 +38,7 @@ interface CTGConfig {
   activeSegTime: number
   artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto
   artifactExpulsive: boolean // concentrar el artefacto hacia el expulsivo (final)
+  paper: boolean             // estilo papel real (true) o pantalla oscura (false)
 }
 
 // ── Maths ─────────────────────────────────────────────────
@@ -47,8 +48,39 @@ const clamp      = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(
 const gaussian   = (x: number, c: number, w: number, a: number) => a * Math.exp(-0.5 * ((x - c) / w) ** 2)
 const lerp       = (a: number, b: number, t: number) => a + (b - a) * t
 
-const fhrToPx  = (fhr: number) => FHR_TOP  + (210 - fhr)  / 160 * (FHR_BOTTOM - FHR_TOP)
+const FHR_MIN  = 30
+const FHR_MAX  = 240
+const fhrToPx  = (fhr: number) => FHR_TOP  + (FHR_MAX - fhr) / (FHR_MAX - FHR_MIN) * (FHR_BOTTOM - FHR_TOP)
 const tocoToPx = (p: number)   => TOCO_BOTTOM - (p / 100) * (TOCO_BOTTOM - TOCO_TOP)
+
+// ── Temas de render (papel real / pantalla oscura) ────────
+function theme(paper: boolean) {
+  return paper ? {
+    bg: '#fffdfa',
+    hMinor: 'rgba(226,128,120,0.34)', hMajor: 'rgba(205,82,74,0.55)',
+    vMinor: 'rgba(226,128,120,0.32)', vMajor: 'rgba(205,82,74,0.55)',
+    tocoSep: 'rgba(205,82,74,0.45)',  tocoH:  'rgba(226,128,120,0.30)',
+    timeLabel: 'rgba(150,60,55,0.8)',
+    fhrLabelBox: 'rgba(255,253,250,0.8)', fhrLabelText: 'rgba(150,60,55,0.8)',
+    segLine: (a: boolean) => a ? 'rgba(37,99,235,0.7)' : 'rgba(37,99,235,0.3)',
+    segTri:  (a: boolean) => a ? 'rgba(37,99,235,0.9)' : 'rgba(37,99,235,0.4)',
+    segText: (a: boolean) => a ? '#2563eb' : 'rgba(37,99,235,0.55)',
+    toco: 'rgba(40,40,52,0.9)', tocoFill: 'rgba(40,40,52,0.05)',
+    fhr: '#151522', fhrGlow: 'rgba(0,0,0,0)', fhrGlowBlur: 0,
+  } : {
+    bg: '#050816',
+    hMinor: 'rgba(71,85,105,0.20)',  hMajor: 'rgba(100,116,139,0.32)',
+    vMinor: 'rgba(71,85,105,0.22)',  vMajor: 'rgba(100,116,139,0.42)',
+    tocoSep: 'rgba(100,116,139,0.3)', tocoH:  'rgba(71,85,105,0.18)',
+    timeLabel: 'rgba(100,116,139,0.65)',
+    fhrLabelBox: 'rgba(30,41,59,0.85)', fhrLabelText: 'rgba(100,116,139,0.6)',
+    segLine: (a: boolean) => a ? 'rgba(34,211,238,0.7)' : 'rgba(34,211,238,0.25)',
+    segTri:  (a: boolean) => a ? 'rgba(34,211,238,0.9)' : 'rgba(34,211,238,0.35)',
+    segText: (a: boolean) => a ? '#22d3ee' : 'rgba(34,211,238,0.5)',
+    toco: 'rgba(251,191,36,0.9)', tocoFill: 'rgba(251,191,36,0.06)',
+    fhr: '#6EE7FF', fhrGlow: 'rgba(110,231,255,0.35)', fhrGlowBlur: 3,
+  }
+}
 
 const varLabel = (amp: number) => {
   if (amp < 2)   return 'Ausente'
@@ -167,22 +199,23 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive } = config
+  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
+  const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
   canvas.height = CANVAS_H
   const ctx = canvas.getContext('2d')!
 
-  ctx.fillStyle = '#050816'
+  ctx.fillStyle = th.bg
   ctx.fillRect(0, 0, W, CANVAS_H)
 
   // Grid — papel CTG chileno, 1 cm/min
   ctx.setLineDash([])
   // Horizontal FCF: línea fina cada 10 lpm, marcada cada 30 lpm
-  for (let fhr = 60; fhr <= 210; fhr += 10) {
+  for (let fhr = FHR_MIN; fhr <= FHR_MAX; fhr += 10) {
     const y = fhrToPx(fhr)
     const major = fhr % 30 === 0
-    ctx.strokeStyle = major ? 'rgba(100,116,139,0.32)' : 'rgba(71,85,105,0.20)'
+    ctx.strokeStyle = major ? th.hMajor : th.hMinor
     ctx.lineWidth   = major ? 0.8 : 0.5
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
   }
@@ -190,31 +223,31 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   for (let half = 0; half <= duration * 2; half++) {
     const x = (half / 2) * PX_PER_MIN
     const major = half % 6 === 0   // cada 3 min
-    ctx.strokeStyle = major ? 'rgba(100,116,139,0.42)' : 'rgba(71,85,105,0.22)'
+    ctx.strokeStyle = major ? th.vMajor : th.vMinor
     ctx.lineWidth   = major ? 1.0 : 0.5
     ctx.beginPath(); ctx.moveTo(x, FHR_TOP);   ctx.lineTo(x, FHR_BOTTOM + 10); ctx.stroke()
     ctx.beginPath(); ctx.moveTo(x, TOCO_TOP - 6); ctx.lineTo(x, TOCO_BOTTOM);  ctx.stroke()
   }
   // Separador FCF / TOCO
-  ctx.strokeStyle = 'rgba(100,116,139,0.3)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5])
+  ctx.strokeStyle = th.tocoSep; ctx.lineWidth = 1; ctx.setLineDash([3, 5])
   ctx.beginPath(); ctx.moveTo(0, TOCO_TOP - 6); ctx.lineTo(W, TOCO_TOP - 6); ctx.stroke()
   ctx.setLineDash([])
   // Horizontal TOCO cada 25 UA
   ;[25, 50, 75].forEach(p => {
-    ctx.strokeStyle = 'rgba(71,85,105,0.18)'; ctx.lineWidth = 0.5
+    ctx.strokeStyle = th.tocoH; ctx.lineWidth = 0.5
     const y = tocoToPx(p)
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
   })
   // Etiquetas de tiempo cada 3 min (sobre las líneas oscuras)
-  ctx.fillStyle = 'rgba(100,116,139,0.65)'; ctx.font = '9px system-ui'; ctx.textAlign = 'center'
+  ctx.fillStyle = th.timeLabel; ctx.font = '9px system-ui'; ctx.textAlign = 'center'
   for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", m * PX_PER_MIN, CANVAS_H - 3)
   ctx.font = '8.5px system-ui'; ctx.textAlign = 'right'
   for (let m = 10; m <= duration; m += 10) {
-    ;[210, 180, 150, 120, 90, 60].forEach(fhr => {
+    ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => {
       const y = fhrToPx(fhr)
-      ctx.fillStyle = 'rgba(30,41,59,0.85)'
+      ctx.fillStyle = th.fhrLabelBox
       ctx.fillRect(m * PX_PER_MIN - 28, y - 7, 26, 13)
-      ctx.fillStyle = 'rgba(100,116,139,0.6)'
+      ctx.fillStyle = th.fhrLabelText
       ctx.fillText(String(fhr), m * PX_PER_MIN - 4, y + 4)
     })
   }
@@ -223,14 +256,14 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   segments.slice(1).forEach(seg => {
     const x = seg.time * PX_PER_MIN
     const isActive = seg.time === activeSegTime
-    ctx.strokeStyle = isActive ? 'rgba(34,211,238,0.7)' : 'rgba(34,211,238,0.25)'
+    ctx.strokeStyle = th.segLine(isActive)
     ctx.lineWidth   = isActive ? 1.5 : 1
     ctx.setLineDash([4, 4])
     ctx.beginPath(); ctx.moveTo(x, FHR_TOP - 5); ctx.lineTo(x, FHR_BOTTOM + 15); ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = isActive ? 'rgba(34,211,238,0.9)' : 'rgba(34,211,238,0.35)'
+    ctx.fillStyle = th.segTri(isActive)
     ctx.beginPath(); ctx.moveTo(x - 5, FHR_TOP - 5); ctx.lineTo(x + 5, FHR_TOP - 5); ctx.lineTo(x, FHR_TOP + 5); ctx.closePath(); ctx.fill()
-    ctx.fillStyle = isActive ? '#22d3ee' : 'rgba(34,211,238,0.5)'
+    ctx.fillStyle = th.segText(isActive)
     ctx.font = 'bold 9px system-ui'; ctx.textAlign = 'left'
     ctx.fillText(seg.time.toFixed(1) + "'", x + 4, FHR_TOP + 3)
   })
@@ -243,18 +276,18 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
     contractions.forEach(c => { toco += gaussian(t, c.time, c.duration * 0.48, c.amplitude) })
     tocoPath.push(clamp(toco, 0, 100))
   }
-  ctx.strokeStyle = 'rgba(251,191,36,0.9)'; ctx.lineWidth = 1.5
+  ctx.strokeStyle = th.toco; ctx.lineWidth = 1.5
   ctx.beginPath()
   tocoPath.forEach((v, x) => { const y = tocoToPx(v); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
   ctx.stroke()
-  ctx.fillStyle = 'rgba(251,191,36,0.06)'
+  ctx.fillStyle = th.tocoFill
   ctx.beginPath()
   tocoPath.forEach((v, x) => { const y = tocoToPx(v); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
   ctx.lineTo(W, TOCO_BOTTOM); ctx.lineTo(0, TOCO_BOTTOM); ctx.closePath(); ctx.fill()
 
   // FHR
-  ctx.strokeStyle = '#6EE7FF'; ctx.lineWidth = 1.8
-  ctx.shadowColor = 'rgba(110,231,255,0.35)'; ctx.shadowBlur = 3
+  ctx.strokeStyle = th.fhr; ctx.lineWidth = 1.8
+  ctx.shadowColor = th.fhrGlow; ctx.shadowBlur = th.fhrGlowBlur
   ctx.beginPath()
   let penDown = false
   for (let x = 0; x < W; x++) {
@@ -276,7 +309,7 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
       if (trig > 1.4) fhr += (10 + hash(x * 0.07) * 5) * Math.max(0, Math.sin(Math.PI * ((trig - 1.4) / 0.6)))
     }
     if (artifactLevel > 0) fhr += artifactNoise(t, x, duration, artifactLevel, artifactExpulsive)
-    const y = fhrToPx(clamp(fhr, 50, 210))
+    const y = fhrToPx(clamp(fhr, FHR_MIN, FHR_MAX))
     if (!penDown) { ctx.moveTo(x, y); penDown = true }
     else ctx.lineTo(x, y)
   }
@@ -405,22 +438,25 @@ function ContractionCard({ c, index, onChange, onRemove }: {
 }
 
 // ── Y-axis overlay ────────────────────────────────────────
-function YAxis() {
+function YAxis({ paper }: { paper: boolean }) {
+  const bg   = paper ? '#fffdfa' : '#050816'
+  const fhrC = paper ? 'rgba(150,60,55,0.85)' : 'rgba(148,163,184,0.75)'
+  const uaC  = paper ? 'rgba(40,40,52,0.6)'   : 'rgba(251,191,36,0.5)'
   return (
     <div style={{
       position: 'absolute', left: 0, top: 0, width: AXIS_W, height: CANVAS_H,
       pointerEvents: 'none', zIndex: 10,
-      background: 'linear-gradient(to right, #050816 65%, transparent)'
+      background: `linear-gradient(to right, ${bg} 65%, transparent)`
     }}>
-      {[210, 180, 150, 120, 90, 60].map(fhr => (
+      {[240, 210, 180, 150, 120, 90, 60, 30].map(fhr => (
         <div key={fhr} style={{
           position: 'absolute', top: fhrToPx(fhr) - 7, left: 0, width: AXIS_W - 4,
-          textAlign: 'right', fontSize: 9, color: 'rgba(148,163,184,0.75)'
+          textAlign: 'right', fontSize: 9, color: fhrC
         }}>{fhr}</div>
       ))}
       <div style={{
         position: 'absolute', top: TOCO_TOP + 4, left: 0, width: AXIS_W - 4,
-        textAlign: 'right', fontSize: 8, color: 'rgba(251,191,36,0.5)', fontWeight: 'bold'
+        textAlign: 'right', fontSize: 8, color: uaC, fontWeight: 'bold'
       }}>UA</div>
     </div>
   )
@@ -439,6 +475,7 @@ export default function App() {
   const [contractions,  setContractions]  = useState<Contraction[]>([])
   const [artifactLevel,     setArtifactLevel]     = useState(0)
   const [artifactExpulsive, setArtifactExpulsive] = useState(true)
+  const [paper,         setPaper]         = useState(true)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'decels' | 'contracciones'>('trazado')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -449,9 +486,9 @@ export default function App() {
     drawCTG(canvasRef.current, {
       segments, cycling, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
-      artifactLevel, artifactExpulsive
+      artifactLevel, artifactExpulsive, paper
     })
-  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive])
+  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -542,6 +579,7 @@ export default function App() {
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
             <Toggle label="Cycling fetal"  value={cycling} onChange={setCycling} />
             <Toggle label="Aceleraciones"  value={accels}  onChange={setAccels} />
+            <Toggle label="Papel real (impresión)" value={paper} onChange={setPaper} />
 
             <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
             <Slider
@@ -685,12 +723,12 @@ export default function App() {
             style={{ minWidth: '100%', cursor: 'crosshair' }}
             onClick={handleCanvasClick}
           >
-            <YAxis />
+            <YAxis paper={paper} />
             <canvas
               ref={canvasRef}
               style={{
                 display: 'block', marginLeft: AXIS_W, borderRadius: 10,
-                border: '1px solid rgba(110,231,255,0.07)',
+                border: paper ? '1px solid rgba(205,82,74,0.25)' : '1px solid rgba(110,231,255,0.07)',
                 boxShadow: '0 8px 40px rgba(0,0,0,0.6)'
               }}
             />
