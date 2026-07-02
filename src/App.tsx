@@ -36,6 +36,8 @@ interface CTGConfig {
   decels: Decel[]
   contractions: Contraction[]
   activeSegTime: number
+  artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto
+  artifactExpulsive: boolean // concentrar el artefacto hacia el expulsivo (final)
 }
 
 // ── Maths ─────────────────────────────────────────────────
@@ -129,9 +131,43 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
   return drop
 }
 
+// ── Artefacto / pérdida de señal ──────────────────────────
+// Modela la pérdida de contacto típica del registro real (la madre se mueve,
+// sobre todo en el expulsivo). Determinista (sin Math.random), reproducible.
+function signalLost(t: number, duration: number, level: number, expulsive: boolean) {
+  if (level <= 0) return false
+  let p = level / 100
+  if (expulsive) {
+    const knee = duration * 0.6
+    p *= t < knee ? 0.1 : 0.1 + 0.9 * smoothstep(knee, duration, t)
+  } else {
+    p *= 0.5
+  }
+  // zonas "malas" cada ~15 s; solo algunas se degradan
+  const zone = hash(Math.floor(t * 4) * 0.13) + 0.5
+  if (zone > 0.35 + 0.65 * p) return false
+  // dentro de una zona mala, huecos en sub-tramos de ~2.5 s
+  const sub = hash(Math.floor(t * 24) * 1.7) + 0.5
+  return sub < 0.4 + 0.6 * p
+}
+function artifactNoise(t: number, x: number, duration: number, level: number, expulsive: boolean) {
+  let p = level / 100
+  if (expulsive) {
+    const knee = duration * 0.6
+    p *= t < knee ? 0.15 : 0.15 + 0.85 * smoothstep(knee, duration, t)
+  }
+  let n = hash(x * 1.3) * 3 * p              // ruido leve continuo
+  const zone = hash(Math.floor(t * 4) * 0.13) + 0.5
+  if (zone < 0.35 + 0.65 * p) {             // spikes ocasionales en zonas malas
+    const spike = hash(x * 2.7)
+    if (Math.abs(spike) > 0.42) n += spike * 18 * p
+  }
+  return n
+}
+
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, cycling, accels, duration, decels, contractions, activeSegTime } = config
+  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive } = config
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
   canvas.height = CANVAS_H
@@ -212,8 +248,14 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   ctx.strokeStyle = '#6EE7FF'; ctx.lineWidth = 1.8
   ctx.shadowColor = 'rgba(110,231,255,0.35)'; ctx.shadowBlur = 3
   ctx.beginPath()
+  let penDown = false
   for (let x = 0; x < W; x++) {
     const t    = x / PX_PER_MIN
+    // artefacto: pérdida de señal → se interrumpe el trazo (pen-up)
+    if (artifactLevel > 0 && signalLost(t, duration, artifactLevel, artifactExpulsive)) {
+      penDown = false
+      continue
+    }
     const sv   = getSegmentValues(segments, t)
     const cf   = cycling ? cyclingFactor(t) : 1
     const v    = variabilityAt(x * 0.5, sv.varAmp * cf)
@@ -225,8 +267,10 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
       const trig = Math.sin(x / 23) + 0.7 * Math.sin(x / 11.3)
       if (trig > 1.4) fhr += (10 + hash(x * 0.07) * 5) * Math.max(0, Math.sin(Math.PI * ((trig - 1.4) / 0.6)))
     }
+    if (artifactLevel > 0) fhr += artifactNoise(t, x, duration, artifactLevel, artifactExpulsive)
     const y = fhrToPx(clamp(fhr, 50, 210))
-    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)
+    if (!penDown) { ctx.moveTo(x, y); penDown = true }
+    else ctx.lineTo(x, y)
   }
   ctx.stroke()
   ctx.shadowBlur = 0
@@ -385,6 +429,8 @@ export default function App() {
   const [duration,      setDuration]      = useState(20)
   const [decels,        setDecels]        = useState<Decel[]>([])
   const [contractions,  setContractions]  = useState<Contraction[]>([])
+  const [artifactLevel,     setArtifactLevel]     = useState(0)
+  const [artifactExpulsive, setArtifactExpulsive] = useState(true)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'decels' | 'contracciones'>('trazado')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -394,9 +440,10 @@ export default function App() {
     if (!canvasRef.current) return
     drawCTG(canvasRef.current, {
       segments, cycling, accels, duration, decels, contractions,
-      activeSegTime: activeSeg?.time ?? 0
+      activeSegTime: activeSeg?.time ?? 0,
+      artifactLevel, artifactExpulsive
     })
-  }, [segments, cycling, accels, duration, decels, contractions, activeSegId])
+  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -435,7 +482,7 @@ export default function App() {
   }
 
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({ segments, cycling, accels, duration, decels, contractions }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ segments, cycling, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
@@ -487,6 +534,17 @@ export default function App() {
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
             <Toggle label="Cycling fetal"  value={cycling} onChange={setCycling} />
             <Toggle label="Aceleraciones"  value={accels}  onChange={setAccels} />
+
+            <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
+            <Slider
+              label="Intensidad" value={artifactLevel}
+              min={0} max={100} step={5} unit="%"
+              color={artifactLevel === 0 ? '#475569' : '#f59e0b'}
+              note={artifactLevel === 0 ? 'Limpio' : artifactLevel <= 30 ? 'Leve' : artifactLevel <= 60 ? 'Moderado' : 'Marcado'}
+              onChange={setArtifactLevel}
+            />
+            <Toggle label="Concentrar en expulsivo" value={artifactExpulsive} onChange={setArtifactExpulsive} />
+            <p className="text-[10px] text-slate-700 -mt-1 mb-1">Simula la pérdida de contacto real (movimiento materno, pujo)</p>
 
             <SectionTitle color="#22d3ee">Puntos de quiebre ({segments.length})</SectionTitle>
             <p className="text-[10px] text-slate-700 -mt-2 mb-2">Haz clic en el trazado para agregar</p>
