@@ -176,30 +176,38 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   ctx.fillStyle = '#050816'
   ctx.fillRect(0, 0, W, CANVAS_H)
 
-  // Grid
-  ;[60, 90, 120, 150, 180, 210].forEach(fhr => {
+  // Grid — papel CTG chileno, 1 cm/min
+  ctx.setLineDash([])
+  // Horizontal FCF: línea fina cada 10 lpm, marcada cada 30 lpm
+  for (let fhr = 60; fhr <= 210; fhr += 10) {
     const y = fhrToPx(fhr)
-    ctx.strokeStyle = fhr === 150 ? 'rgba(100,116,139,0.4)' : 'rgba(71,85,105,0.22)'
-    ctx.lineWidth   = fhr === 150 ? 1.5 : 0.8
-    ctx.setLineDash([])
+    const major = fhr % 30 === 0
+    ctx.strokeStyle = major ? 'rgba(100,116,139,0.32)' : 'rgba(71,85,105,0.20)'
+    ctx.lineWidth   = major ? 0.8 : 0.5
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
-  })
-  for (let m = 0; m <= duration; m++) {
-    const x = m * PX_PER_MIN
-    ctx.strokeStyle = m % 5 === 0 ? 'rgba(100,116,139,0.28)' : 'rgba(71,85,105,0.14)'
-    ctx.lineWidth   = m % 5 === 0 ? 0.8 : 0.5
-    ctx.beginPath(); ctx.moveTo(x, FHR_TOP); ctx.lineTo(x, FHR_BOTTOM + 10); ctx.stroke()
   }
+  // Vertical tiempo: línea clara cada 0,5 cm (0,5 min), oscura cada 3 min
+  for (let half = 0; half <= duration * 2; half++) {
+    const x = (half / 2) * PX_PER_MIN
+    const major = half % 6 === 0   // cada 3 min
+    ctx.strokeStyle = major ? 'rgba(100,116,139,0.42)' : 'rgba(71,85,105,0.22)'
+    ctx.lineWidth   = major ? 1.0 : 0.5
+    ctx.beginPath(); ctx.moveTo(x, FHR_TOP);   ctx.lineTo(x, FHR_BOTTOM + 10); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(x, TOCO_TOP - 6); ctx.lineTo(x, TOCO_BOTTOM);  ctx.stroke()
+  }
+  // Separador FCF / TOCO
   ctx.strokeStyle = 'rgba(100,116,139,0.3)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5])
   ctx.beginPath(); ctx.moveTo(0, TOCO_TOP - 6); ctx.lineTo(W, TOCO_TOP - 6); ctx.stroke()
   ctx.setLineDash([])
+  // Horizontal TOCO cada 25 UA
   ;[25, 50, 75].forEach(p => {
     ctx.strokeStyle = 'rgba(71,85,105,0.18)'; ctx.lineWidth = 0.5
     const y = tocoToPx(p)
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
   })
+  // Etiquetas de tiempo cada 3 min (sobre las líneas oscuras)
   ctx.fillStyle = 'rgba(100,116,139,0.65)'; ctx.font = '9px system-ui'; ctx.textAlign = 'center'
-  for (let m = 5; m <= duration; m += 5) ctx.fillText(m + "'", m * PX_PER_MIN, CANVAS_H - 3)
+  for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", m * PX_PER_MIN, CANVAS_H - 3)
   ctx.font = '8.5px system-ui'; ctx.textAlign = 'right'
   for (let m = 10; m <= duration; m += 10) {
     ;[210, 180, 150, 120, 90, 60].forEach(fhr => {
