@@ -23,6 +23,11 @@ interface Decel {
   depth: number
   duration: number
 }
+interface Accel {
+  time: number      // minuto de inicio
+  amplitude: number // altura en lpm sobre la basal
+  duration: number  // duración en segundos
+}
 interface Contraction {
   time: number
   duration: number
@@ -31,7 +36,8 @@ interface Contraction {
 interface CTGConfig {
   segments: Segment[]
   cycling: boolean
-  accels: boolean
+  autoAccels: boolean
+  accels: Accel[]
   duration: number
   decels: Decel[]
   contractions: Contraction[]
@@ -163,6 +169,24 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
   return drop
 }
 
+// ── Aceleración (subida sobre la basal) ───────────────────
+function accelRiseAt(t: number, x: number, accels: Accel[]) {
+  let rise = 0
+  accels.forEach((a, i) => {
+    const seed   = i * 31.7
+    const durMin = a.duration / 60
+    const startT = a.time
+    const endT   = startT + durMin
+    if (t >= startT && t <= endT) {
+      const p     = (t - startT) / durMin        // 0..1
+      const shape = Math.sin(p * Math.PI)         // hump redondeado 0..1..0
+      const eased = Math.pow(shape, 0.7)          // ascenso algo más marcado, cima redondeada
+      rise = Math.max(rise, a.amplitude * eased + hash(x * 0.5 + seed) * a.amplitude * 0.05)
+    }
+  })
+  return rise
+}
+
 // ── Artefacto / pérdida de señal ──────────────────────────
 // Modela la pérdida de contacto típica del registro real (la madre se mueve,
 // sobre todo en el expulsivo). Determinista (sin Math.random), reproducible.
@@ -199,7 +223,7 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
+  const { segments, cycling, autoAccels, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -301,10 +325,11 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
     const cf   = cycling ? cyclingFactor(t) : 1
     const v    = variabilityAt(x * 0.5, sv.varAmp * cf)
     const drop = decelDropAt(t, x, decels)
+    const rise = accelRiseAt(t, x, accels)
     let fhr = drop > 15
       ? sv.baseline - drop + hash(x * 0.9) * (sv.varAmp * 0.15)
-      : sv.baseline + v - drop
-    if (accels && drop < 5) {
+      : sv.baseline + v - drop + rise
+    if (autoAccels && drop < 5 && rise < 5) {
       const trig = Math.sin(x / 23) + 0.7 * Math.sin(x / 11.3)
       if (trig > 1.4) fhr += (10 + hash(x * 0.07) * 5) * Math.max(0, Math.sin(Math.PI * ((trig - 1.4) / 0.6)))
     }
@@ -418,6 +443,25 @@ function DecelCard({ decel, index, onChange, onRemove }: {
   )
 }
 
+// ── AccelCard ─────────────────────────────────────────────
+function AccelCard({ accel, index, onChange, onRemove }: {
+  accel: Accel; index: number; onChange: (a: Accel) => void; onRemove: () => void
+}) {
+  return (
+    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-2">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-emerald-400">Acel. #{index + 1}</span>
+        <button onClick={onRemove} className="text-slate-600 hover:text-red-400 text-base leading-none transition-colors">×</button>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <NumberInput label="Inicio (min)"    value={accel.time}      min={0.5} max={60}  step={0.5} onChange={v => onChange({ ...accel, time: v })} />
+        <NumberInput label="Amplitud (lpm)"  value={accel.amplitude} min={10}  max={45}  step={5}   onChange={v => onChange({ ...accel, amplitude: v })} />
+        <NumberInput label="Duración (seg)"  value={accel.duration}  min={15}  max={120} step={5}   onChange={v => onChange({ ...accel, duration: v })} />
+      </div>
+    </div>
+  )
+}
+
 // ── ContractionCard ───────────────────────────────────────
 function ContractionCard({ c, index, onChange, onRemove }: {
   c: Contraction; index: number; onChange: (c: Contraction) => void; onRemove: () => void
@@ -469,14 +513,15 @@ export default function App() {
   const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 8 }])
   const [activeSegId,   setActiveSegId]   = useState(0)
   const [cycling,       setCycling]       = useState(true)
-  const [accels,        setAccels]        = useState(false)
+  const [autoAccels,    setAutoAccels]    = useState(false)
+  const [accels,        setAccels]        = useState<Accel[]>([])
   const [duration,      setDuration]      = useState(20)
   const [decels,        setDecels]        = useState<Decel[]>([])
   const [contractions,  setContractions]  = useState<Contraction[]>([])
   const [artifactLevel,     setArtifactLevel]     = useState(0)
   const [artifactExpulsive, setArtifactExpulsive] = useState(true)
   const [paper,         setPaper]         = useState(true)
-  const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'decels' | 'contracciones'>('trazado')
+  const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'accels' | 'decels' | 'contracciones'>('trazado')
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeSeg = segments.find(s => s.id === activeSegId) ?? segments[0]
@@ -484,11 +529,11 @@ export default function App() {
   useEffect(() => {
     if (!canvasRef.current) return
     drawCTG(canvasRef.current, {
-      segments, cycling, accels, duration, decels, contractions,
+      segments, cycling, autoAccels, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
       artifactLevel, artifactExpulsive, paper
     })
-  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
+  }, [segments, cycling, autoAccels, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -527,7 +572,7 @@ export default function App() {
   }
 
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({ segments, cycling, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ segments, cycling, autoAccels, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
@@ -556,13 +601,14 @@ export default function App() {
         <div className="flex border-b border-slate-900">
           {([
             { key: 'trazado',       label: 'Trazado' },
-            { key: 'decels',        label: `Desacel. (${decels.length})` },
-            { key: 'contracciones', label: `Contrac. (${contractions.length})` }
+            { key: 'accels',        label: `Acel. (${accels.length})` },
+            { key: 'decels',        label: `Desac. (${decels.length})` },
+            { key: 'contracciones', label: `Contr. (${contractions.length})` }
           ] as const).map(tab => (
             <button
               key={tab.key}
               onClick={() => setSidebarTab(tab.key)}
-              className="flex-1 py-2 text-[10px] font-semibold border-b-2 transition-all"
+              className="flex-1 py-2 text-[9px] font-semibold border-b-2 transition-all"
               style={{
                 borderBottomColor: sidebarTab === tab.key ? '#22d3ee' : 'transparent',
                 color: sidebarTab === tab.key ? '#22d3ee' : '#475569',
@@ -578,7 +624,7 @@ export default function App() {
             <SectionTitle>Duración del trazado</SectionTitle>
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
             <Toggle label="Cycling fetal"  value={cycling} onChange={setCycling} />
-            <Toggle label="Aceleraciones"  value={accels}  onChange={setAccels} />
+            <Toggle label="Aceleraciones automáticas"  value={autoAccels}  onChange={setAutoAccels} />
             <Toggle label="Papel real (impresión)" value={paper} onChange={setPaper} />
 
             <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
@@ -651,6 +697,26 @@ export default function App() {
           </div>
         )}
 
+        {/* ── Aceleraciones tab ── */}
+        {sidebarTab === 'accels' && (
+          <div className="flex-1 px-3.5 py-3">
+            {accels.length === 0 && (
+              <p className="text-[10px] text-slate-600 mb-2">Aceleración: subida ≥ 15 lpm sobre la basal durante ≥ 15 s (feto de término).</p>
+            )}
+            {accels.map((a, i) => (
+              <AccelCard
+                key={i} accel={a} index={i}
+                onChange={v => setAccels(prev => prev.map((x, j) => j === i ? v : x))}
+                onRemove={() => setAccels(prev => prev.filter((_, j) => j !== i))}
+              />
+            ))}
+            <button
+              onClick={() => setAccels(a => [...a, { time: parseFloat((duration * 0.3).toFixed(1)), amplitude: 20, duration: 30 }])}
+              className="w-full py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 text-xs hover:border-emerald-600 hover:text-emerald-500 transition-colors mt-1"
+            >+ Agregar aceleración</button>
+          </div>
+        )}
+
         {/* ── Desaceleraciones tab ── */}
         {sidebarTab === 'decels' && (
           <div className="flex-1 px-3.5 py-3">
@@ -709,6 +775,7 @@ export default function App() {
             Var. {varLabel(activeSeg?.varAmp ?? 8)}
           </span>
           {segments.length > 1 && <span className="text-xs text-cyan-600">{segments.length} segmentos</span>}
+          {accels.length > 0 && <span className="text-xs text-emerald-400">{accels.length} acel.</span>}
           {decels.length > 0 && <span className="text-xs text-purple-400">{decels.length} desacel.</span>}
           {contractions.length > 0 && <span className="text-xs text-amber-500">{contractions.length} contrac.</span>}
           <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full border border-slate-800 text-slate-600">
