@@ -36,7 +36,6 @@ interface Contraction {
 interface CTGConfig {
   segments: Segment[]
   cycling: boolean
-  autoAccels: boolean
   accels: Accel[]
   duration: number
   decels: Decel[]
@@ -223,7 +222,7 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, cycling, autoAccels, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
+  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -329,10 +328,6 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
     let fhr = drop > 15
       ? sv.baseline - drop + hash(x * 0.9) * (sv.varAmp * 0.15)
       : sv.baseline + v - drop + rise
-    if (autoAccels && drop < 5 && rise < 5) {
-      const trig = Math.sin(x / 23) + 0.7 * Math.sin(x / 11.3)
-      if (trig > 1.4) fhr += (10 + hash(x * 0.07) * 5) * Math.max(0, Math.sin(Math.PI * ((trig - 1.4) / 0.6)))
-    }
     if (artifactLevel > 0) fhr += artifactNoise(t, x, duration, artifactLevel, artifactExpulsive)
     const y = fhrToPx(clamp(fhr, FHR_MIN, FHR_MAX))
     if (!penDown) { ctx.moveTo(x, y); penDown = true }
@@ -513,7 +508,6 @@ export default function App() {
   const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 8 }])
   const [activeSegId,   setActiveSegId]   = useState(0)
   const [cycling,       setCycling]       = useState(true)
-  const [autoAccels,    setAutoAccels]    = useState(false)
   const [accels,        setAccels]        = useState<Accel[]>([])
   const [duration,      setDuration]      = useState(20)
   const [decels,        setDecels]        = useState<Decel[]>([])
@@ -529,11 +523,11 @@ export default function App() {
   useEffect(() => {
     if (!canvasRef.current) return
     drawCTG(canvasRef.current, {
-      segments, cycling, autoAccels, accels, duration, decels, contractions,
+      segments, cycling, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
       artifactLevel, artifactExpulsive, paper
     })
-  }, [segments, cycling, autoAccels, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
+  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -572,7 +566,7 @@ export default function App() {
   }
 
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({ segments, cycling, autoAccels, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ segments, cycling, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
@@ -624,7 +618,6 @@ export default function App() {
             <SectionTitle>Duración del trazado</SectionTitle>
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
             <Toggle label="Cycling fetal"  value={cycling} onChange={setCycling} />
-            <Toggle label="Aceleraciones automáticas"  value={autoAccels}  onChange={setAutoAccels} />
             <Toggle label="Papel real (impresión)" value={paper} onChange={setPaper} />
 
             <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
