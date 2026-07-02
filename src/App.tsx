@@ -89,13 +89,13 @@ function theme(paper: boolean) {
 
 const varLabel = (amp: number) => {
   if (amp < 2)   return 'Ausente'
-  if (amp < 6)   return 'Mínima'
+  if (amp < 5)   return 'Mínima'
   if (amp <= 25) return 'Normal'
   return 'Marcada'
 }
 const varColor = (amp: number) => {
   if (amp < 2)   return '#ef4444'
-  if (amp < 6)   return '#f59e0b'
+  if (amp < 5)   return '#f59e0b'
   if (amp <= 25) return '#22d3ee'
   return '#a78bfa'
 }
@@ -119,10 +119,14 @@ function getSegmentValues(segments: Segment[], t: number) {
 }
 
 // ── Waveform utils ────────────────────────────────────────
+// VAR_CAL calibra la salida para que varAmp (slider) ≈ amplitud de banda real
+// en lpm (p10–p90), según trazados reales CTU-CHB: disminuida ~4, normal ~8,
+// marcada ~28. Sin él, el motor dibujaba ~2.5× más plano que el valor del slider.
+const VAR_CAL = 2.56
 const variabilityAt = (x: number, amp: number) => {
   const slow = Math.sin(x / 17) + 0.6 * Math.sin(x / 6.3) + 0.4 * Math.sin(x / 2.7)
   const beat = hash(x) * 1.2
-  return ((slow / 2.0) + beat * 0.5) * (amp / 2)
+  return ((slow / 2.0) + beat * 0.5) * (amp / 2) * VAR_CAL
 }
 const cyclingFactor = (min: number) => 0.35 + 0.65 * (0.5 + 0.5 * Math.sin((min / 4) * Math.PI))
 
@@ -680,7 +684,7 @@ export default function App() {
                 />
                 <Slider
                   label="Variabilidad" value={activeSeg.varAmp}
-                  min={0} max={30} step={0.5} unit="lpm"
+                  min={0} max={40} step={0.5} unit="lpm"
                   color={varColor(activeSeg.varAmp)}
                   note={varLabel(activeSeg.varAmp)}
                   onChange={v => updateSeg('varAmp', v)}
