@@ -705,7 +705,7 @@ export default function App() {
                 />
                 <Slider
                   label="Variabilidad (amplitud)" value={activeSeg.varAmp}
-                  min={0} max={50} step={0.5} unit="lpm"
+                  min={0} max={90} step={0.5} unit="lpm"
                   color={varColor(activeSeg.varAmp)}
                   note={varLabel(activeSeg.varAmp)}
                   onChange={v => updateSeg('varAmp', v)}
