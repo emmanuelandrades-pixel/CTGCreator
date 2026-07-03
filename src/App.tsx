@@ -835,7 +835,7 @@ export default function App() {
         {/* Header */}
         <div className="px-4 py-3.5 border-b" style={{ borderColor: U.border }}>
           <div className="flex items-center gap-2 mb-1">
-            <div className="w-2 h-2 rounded-full" style={{ background: U.accent, boxShadow: `0 0 8px ${U.accent}b3` }} />
+            <img src="/logo-icon.png" alt="" width={26} height={26} style={{ borderRadius: 6 }} />
             <span className="text-sm font-bold" style={{ color: U.headerText }}>CTG <span style={{ color: U.accent }}>Creator</span></span>
             <button
               onClick={() => setDarkUI(v => !v)}
