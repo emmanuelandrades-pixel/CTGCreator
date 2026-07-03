@@ -88,9 +88,12 @@ interface CTGConfig {
   decels: Decel[]
   contractions: Contraction[]
   activeSegTime: number
-  artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto
-  artifactExpulsive: boolean // concentrar el artefacto hacia el expulsivo (final)
+  artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto FCF
+  artifactExpulsive: boolean // concentrar el artefacto FCF hacia el expulsivo (final)
   paper: boolean             // estilo papel real (true) o pantalla oscura (false)
+  tocoTone: number           // tono uterino basal, en mmHg
+  tocoNoise: number          // 0–100, ruido fino continuo de la línea TOCO
+  tocoArtifact: number       // 0–100, ráfagas de artefacto del transductor TOCO
 }
 
 // ── Maths ─────────────────────────────────────────────────
@@ -300,9 +303,31 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
   return n
 }
 
+// ── TOCO: ruido de línea y artefacto ──────────────────────
+// La traza de TOCO real nunca es perfectamente lisa: hay un temblor fino
+// continuo (tono uterino inquieto, respiración materna) que `tocoNoiseAt`
+// reproduce mezclando dos frecuencias de hash. `tocoArtifactAt` añade
+// perturbaciones más bruscas y esporádicas (el transductor externo se
+// mueve/pierde apoyo), agrupadas en ráfagas cortas, para mayor realismo.
+const tocoNoiseAt = (x: number, amt: number) => {
+  const n1 = hash(x * 0.05) * 1.5
+  const n2 = hash(x * 0.37) * 0.7
+  return (n1 + n2) * (amt / 40)
+}
+function tocoArtifactAt(t: number, x: number, amt: number) {
+  if (amt <= 0) return 0
+  const p = amt / 100
+  const zone = hash(Math.floor(t * 2) * 0.31) + 0.5
+  if (zone < 0.25 + 0.5 * p) {
+    const spike = hash(x * 3.1)
+    return spike * 14 * p
+  }
+  return 0
+}
+
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
+  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper, tocoTone, tocoNoise, tocoArtifact } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -397,7 +422,7 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   const tocoPath: number[] = []
   for (let x = 0; x < W; x++) {
     const t = x / PX_PER_MIN
-    let toco = 2 + hash(x * 0.05) * 1.5
+    let toco = tocoTone + tocoNoiseAt(x, tocoNoise) + tocoArtifactAt(t, x, tocoArtifact)
     contractions.forEach(c => { toco += gaussian(t, c.time, c.duration * 0.48, c.amplitude) })
     tocoPath.push(clamp(toco, 0, 100))
   }
@@ -631,6 +656,9 @@ export default function App() {
   const [contractions,  setContractions]  = useState<Contraction[]>([])
   const [artifactLevel,     setArtifactLevel]     = useState(0)
   const [artifactExpulsive, setArtifactExpulsive] = useState(true)
+  const [tocoTone,      setTocoTone]      = useState(10)
+  const [tocoNoise,     setTocoNoise]     = useState(35)
+  const [tocoArtifact,  setTocoArtifact]  = useState(0)
   const [paper,         setPaper]         = useState(true)
   const [darkUI,        setDarkUI]        = useState(false)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'accels' | 'decels' | 'contracciones'>('trazado')
@@ -645,9 +673,10 @@ export default function App() {
     drawCTG(canvasRef.current, {
       segments, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
-      artifactLevel, artifactExpulsive, paper
+      artifactLevel, artifactExpulsive, paper,
+      tocoTone, tocoNoise, tocoArtifact
     })
-  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
+  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper, tocoTone, tocoNoise, tocoArtifact])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -687,7 +716,11 @@ export default function App() {
   }
 
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({ segments, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({
+      segments, accels, duration, decels, contractions,
+      artifact: { level: artifactLevel, expulsive: artifactExpulsive },
+      toco: { tone: tocoTone, noise: tocoNoise, artifact: tocoArtifact },
+    }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
@@ -866,6 +899,26 @@ export default function App() {
         {/* ── Contracciones tab ── */}
         {sidebarTab === 'contracciones' && (
           <div className="flex-1 px-3.5 py-3">
+            <SectionTitle color="#f59e0b">Motor general de contracciones</SectionTitle>
+            <Slider
+              label="Tono uterino (basal)" value={tocoTone}
+              min={0} max={30} step={1} unit="mmHg" color="#f59e0b"
+              onChange={setTocoTone}
+            />
+            <Slider
+              label="Ruido de línea" value={tocoNoise}
+              min={0} max={100} step={5} unit="%" color="#f59e0b"
+              note={tocoNoise === 0 ? 'Lisa' : tocoNoise <= 40 ? 'Sutil' : tocoNoise <= 70 ? 'Visible' : 'Marcado'}
+              onChange={setTocoNoise}
+            />
+            <Slider
+              label="Artefacto (transductor)" value={tocoArtifact}
+              min={0} max={100} step={5} unit="%" color="#f59e0b"
+              note={tocoArtifact === 0 ? 'Limpio' : tocoArtifact <= 40 ? 'Leve' : tocoArtifact <= 70 ? 'Moderado' : 'Marcado'}
+              onChange={setTocoArtifact}
+            />
+
+            <SectionTitle color="#f59e0b">Contracciones ({contractions.length})</SectionTitle>
             {contractions.map((c, i) => (
               <ContractionCard
                 key={i} c={c} index={i}
