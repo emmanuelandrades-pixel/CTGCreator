@@ -114,6 +114,7 @@ function theme(paper: boolean) {
     tocoSep: 'rgba(205,82,74,0.45)',  tocoH:  'rgba(226,128,120,0.30)',
     timeLabel: 'rgba(150,60,55,0.8)',
     fhrLabelBox: 'rgba(255,253,250,0.8)', fhrLabelText: 'rgba(150,60,55,0.8)',
+    tocoLabel: 'rgba(120,80,30,0.9)',
     segLine: (a: boolean) => a ? 'rgba(37,99,235,0.7)' : 'rgba(37,99,235,0.3)',
     segTri:  (a: boolean) => a ? 'rgba(37,99,235,0.9)' : 'rgba(37,99,235,0.4)',
     segText: (a: boolean) => a ? '#2563eb' : 'rgba(37,99,235,0.55)',
@@ -126,6 +127,7 @@ function theme(paper: boolean) {
     tocoSep: 'rgba(100,116,139,0.3)', tocoH:  'rgba(71,85,105,0.18)',
     timeLabel: 'rgba(100,116,139,0.65)',
     fhrLabelBox: 'rgba(30,41,59,0.85)', fhrLabelText: 'rgba(100,116,139,0.6)',
+    tocoLabel: 'rgba(251,191,36,0.7)',
     segLine: (a: boolean) => a ? 'rgba(34,211,238,0.7)' : 'rgba(34,211,238,0.25)',
     segTri:  (a: boolean) => a ? 'rgba(34,211,238,0.9)' : 'rgba(34,211,238,0.35)',
     segText: (a: boolean) => a ? '#22d3ee' : 'rgba(34,211,238,0.5)',
@@ -333,15 +335,16 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   ctx.strokeStyle = th.tocoSep; ctx.lineWidth = 1; ctx.setLineDash([3, 5])
   ctx.beginPath(); ctx.moveTo(0, TOCO_TOP - 6); ctx.lineTo(W, TOCO_TOP - 6); ctx.stroke()
   ctx.setLineDash([])
-  // Horizontal TOCO cada 25 UA
-  ;[25, 50, 75].forEach(p => {
-    ctx.strokeStyle = th.tocoH; ctx.lineWidth = 0.5
+  // Horizontal TOCO cada 25 mmHg (0–100); bordes 0 y 100 algo más marcados
+  ;[0, 25, 50, 75, 100].forEach(p => {
+    ctx.strokeStyle = th.tocoH; ctx.lineWidth = (p === 0 || p === 100) ? 0.7 : 0.5
     const y = tocoToPx(p)
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
   })
   // Etiquetas de tiempo cada 3 min (sobre las líneas oscuras)
   ctx.fillStyle = th.timeLabel; ctx.font = '9px system-ui'; ctx.textAlign = 'center'
   for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", m * PX_PER_MIN, CANVAS_H - 3)
+  // Escala FCF (lpm) reimpresa cada 10 min
   ctx.font = '8.5px system-ui'; ctx.textAlign = 'right'
   for (let m = 10; m <= duration; m += 10) {
     ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => {
@@ -350,6 +353,18 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
       ctx.fillRect(m * PX_PER_MIN - 28, y - 7, 26, 13)
       ctx.fillStyle = th.fhrLabelText
       ctx.fillText(String(fhr), m * PX_PER_MIN - 4, y + 4)
+    })
+  }
+  // Escala TOCO en kPa reimpresa cada 5 min (papel chileno: mmHg principal + kPa 2ª)
+  // 1 kPa = 7.5 mmHg → kPa 2,4,…12 en mmHg 15,30,…90
+  ctx.font = '8px system-ui'; ctx.textAlign = 'right'
+  for (let m = 5; m <= duration; m += 5) {
+    ;[2, 4, 6, 8, 10, 12].forEach(kpa => {
+      const y = tocoToPx(kpa * 7.5)
+      ctx.fillStyle = th.fhrLabelBox
+      ctx.fillRect(m * PX_PER_MIN - 22, y - 6, 20, 12)
+      ctx.fillStyle = th.tocoLabel
+      ctx.fillText(String(kpa), m * PX_PER_MIN - 4, y + 3)
     })
   }
 
@@ -567,7 +582,7 @@ function ContractionCard({ c, index, onChange, onRemove }: {
 function YAxis({ paper }: { paper: boolean }) {
   const bg   = paper ? '#fffdfa' : '#050816'
   const fhrC = paper ? 'rgba(150,60,55,0.85)' : 'rgba(148,163,184,0.75)'
-  const uaC  = paper ? 'rgba(40,40,52,0.6)'   : 'rgba(251,191,36,0.5)'
+  const uaC  = paper ? 'rgba(120,80,30,0.9)'  : 'rgba(251,191,36,0.6)'
   return (
     <div style={{
       position: 'absolute', left: 0, top: 0, width: AXIS_W, height: CANVAS_H,
@@ -580,10 +595,17 @@ function YAxis({ paper }: { paper: boolean }) {
           textAlign: 'right', fontSize: 9, color: fhrC
         }}>{fhr}</div>
       ))}
+      {/* Graduación TOCO en mmHg (escala principal, papel chileno) */}
+      {[100, 75, 50, 25, 0].map(mmhg => (
+        <div key={'t' + mmhg} style={{
+          position: 'absolute', top: tocoToPx(mmhg) - 6, left: 0, width: AXIS_W - 4,
+          textAlign: 'right', fontSize: 8, color: uaC
+        }}>{mmhg}</div>
+      ))}
       <div style={{
-        position: 'absolute', top: TOCO_TOP + 4, left: 0, width: AXIS_W - 4,
-        textAlign: 'right', fontSize: 8, color: uaC, fontWeight: 'bold'
-      }}>UA</div>
+        position: 'absolute', top: TOCO_TOP - 13, left: 0, width: AXIS_W - 4,
+        textAlign: 'right', fontSize: 7, color: uaC, fontWeight: 'bold'
+      }}>mmHg</div>
     </div>
   )
 }
