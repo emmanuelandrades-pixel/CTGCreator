@@ -844,7 +844,6 @@ export default function App() {
               style={{ borderColor: U.borderStrong, color: U.textMuted }}
             >{darkUI ? '☀️' : '🌙'}</button>
           </div>
-          <p className="text-[10px]" style={{ color: U.textFaint }}>Clic en el panel FCF o TOCO del trazado para agregar un punto de quiebre</p>
         </div>
 
         {/* Tabs */}
