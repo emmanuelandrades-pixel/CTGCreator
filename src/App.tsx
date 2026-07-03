@@ -646,15 +646,23 @@ function AccelCard({ accel, index, onChange, onRemove }: {
 }
 
 // ── ContractionCard ───────────────────────────────────────
-function ContractionCard({ c, index, onChange, onRemove }: {
-  c: Contraction; index: number; onChange: (c: Contraction) => void; onRemove: () => void
+function ContractionCard({ c, index, onChange, onRemove, onDuplicate }: {
+  c: Contraction; index: number; onChange: (c: Contraction) => void; onRemove: () => void; onDuplicate: () => void
 }) {
   const U = useUI()
   return (
     <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-amber-500">Contracción #{index + 1}</span>
-        <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onDuplicate}
+            title="Duplicar contracción"
+            className="hover:text-amber-500 text-xs leading-none transition-colors"
+            style={{ color: U.textFaint }}
+          >⧉</button>
+          <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <NumberInput label="Inicio (min)"    value={c.time}      min={0.5} max={60}  step={0.5} onChange={v => onChange({ ...c, time: v })} />
@@ -1050,6 +1058,10 @@ export default function App() {
                 key={i} c={c} index={i}
                 onChange={v => setContractions(prev => prev.map((x, j) => j === i ? v : x))}
                 onRemove={() => setContractions(prev => prev.filter((_, j) => j !== i))}
+                onDuplicate={() => setContractions(prev => {
+                  const dup: Contraction = { ...c, time: Math.min(c.time + 2, duration - 0.5) }
+                  return [...prev.slice(0, i + 1), dup, ...prev.slice(i + 1)]
+                })}
               />
             ))}
             <button
