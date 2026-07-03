@@ -128,7 +128,7 @@ function theme(paper: boolean) {
     segTri:  (a: boolean) => a ? 'rgba(37,99,235,0.9)' : 'rgba(37,99,235,0.4)',
     segText: (a: boolean) => a ? '#2563eb' : 'rgba(37,99,235,0.55)',
     toco: 'rgba(40,40,52,0.9)', tocoFill: 'rgba(40,40,52,0.05)',
-    fhr: '#151522', fhrGlow: 'rgba(0,0,0,0)', fhrGlowBlur: 0,
+    fhr: '#151522', fhrGlow: 'rgba(0,0,0,0)', fhrGlowBlur: 0, fhrLineWidth: 1.0,
   } : {
     bg: '#050816',
     hMinor: 'rgba(71,85,105,0.20)',  hMajor: 'rgba(100,116,139,0.32)',
@@ -141,7 +141,7 @@ function theme(paper: boolean) {
     segTri:  (a: boolean) => a ? 'rgba(34,211,238,0.9)' : 'rgba(34,211,238,0.35)',
     segText: (a: boolean) => a ? '#22d3ee' : 'rgba(34,211,238,0.5)',
     toco: 'rgba(251,191,36,0.9)', tocoFill: 'rgba(251,191,36,0.06)',
-    fhr: '#6EE7FF', fhrGlow: 'rgba(110,231,255,0.35)', fhrGlowBlur: 3,
+    fhr: '#6EE7FF', fhrGlow: 'rgba(110,231,255,0.3)', fhrGlowBlur: 1.5, fhrLineWidth: 1.2,
   }
 }
 
@@ -489,7 +489,7 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   ctx.stroke()
 
   // FHR
-  ctx.strokeStyle = th.fhr; ctx.lineWidth = 1.8
+  ctx.strokeStyle = th.fhr; ctx.lineWidth = th.fhrLineWidth
   ctx.shadowColor = th.fhrGlow; ctx.shadowBlur = th.fhrGlowBlur
   ctx.beginPath()
   let penDown = false
