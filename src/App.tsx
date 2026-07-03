@@ -874,7 +874,10 @@ export default function App() {
               />
             ))}
             <button
-              onClick={() => setContractions(c => [...c, { time: parseFloat((duration * 0.3).toFixed(1)), duration: 0.8, amplitude: 80 }])}
+              onClick={() => setContractions(c => {
+                const nextTime = c.length === 0 ? 2 : c[c.length - 1].time + 2
+                return [...c, { time: Math.min(nextTime, duration - 0.5), duration: 0.8, amplitude: 80 }]
+              })}
               className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-amber-500 hover:text-amber-500 transition-colors mt-1"
               style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar contracción</button>
