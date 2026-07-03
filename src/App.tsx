@@ -1,4 +1,51 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react'
+
+// ── Tema de interfaz (claro «gris suave» / oscuro) ────────
+// Independiente del estilo del trazado (papel/pantalla). Mantiene la paleta
+// (acentos cian, colores FCF/TOCO/variabilidad).
+interface UITheme {
+  appBg: string; panelBg: string; headerText: string
+  text: string; textMuted: string; textFaint: string
+  border: string; borderStrong: string
+  cardBg: string; inputBg: string; inputBorder: string; inputText: string
+  selectBg: string
+  accent: string; accentActive: string
+  segActiveBg: string; segActiveBorder: string; segInactiveBg: string; segInactiveBorder: string
+  editBg: string; editBorder: string
+  toggleOff: string; dashed: string
+  exportPrimaryBg: string; exportSecondaryText: string
+  canvasArea: string
+}
+const uiThemeLight: UITheme = {
+  appBg: '#e2e8f0', panelBg: '#f8fafc', headerText: '#1e293b',
+  text: '#334155', textMuted: '#64748b', textFaint: '#94a3b8',
+  border: '#e2e8f0', borderStrong: '#cbd5e1',
+  cardBg: '#ffffff', inputBg: '#ffffff', inputBorder: '#cbd5e1', inputText: '#1e293b',
+  selectBg: '#ffffff',
+  accent: '#0891b2', accentActive: '#0e7490',
+  segActiveBg: 'rgba(8,145,178,0.08)', segActiveBorder: '#0891b2',
+  segInactiveBg: '#ffffff', segInactiveBorder: '#e2e8f0',
+  editBg: 'rgba(8,145,178,0.05)', editBorder: 'rgba(8,145,178,0.25)',
+  toggleOff: '#cbd5e1', dashed: '#cbd5e1',
+  exportPrimaryBg: '#0891b2', exportSecondaryText: '#475569',
+  canvasArea: '#e2e8f0',
+}
+const uiThemeDark: UITheme = {
+  appBg: '#0B1120', panelBg: '#0D1321', headerText: '#ffffff',
+  text: '#94a3b8', textMuted: '#64748b', textFaint: '#475569',
+  border: '#0f172a', borderStrong: '#1e293b',
+  cardBg: 'rgba(15,23,42,0.5)', inputBg: '#020617', inputBorder: '#1e293b', inputText: '#ffffff',
+  selectBg: '#0f172a',
+  accent: '#22d3ee', accentActive: '#22d3ee',
+  segActiveBg: 'rgba(34,211,238,0.05)', segActiveBorder: '#22d3ee',
+  segInactiveBg: 'rgba(15,23,42,0.5)', segInactiveBorder: '#1e293b',
+  editBg: 'rgba(34,211,238,0.03)', editBorder: 'rgba(34,211,238,0.15)',
+  toggleOff: '#334155', dashed: '#334155',
+  exportPrimaryBg: '#0e7490', exportSecondaryText: '#94a3b8',
+  canvasArea: '#0B1120',
+}
+const UICtx = createContext<UITheme>(uiThemeLight)
+const useUI = () => useContext(UICtx)
 
 // ── Canvas constants ──────────────────────────────────────
 const FHR_TOP     = 22
@@ -357,24 +404,26 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
 }
 
 // ── Slider ────────────────────────────────────────────────
-function Slider({ label, value, min, max, step = 1, unit = '', onChange, color = '#22d3ee', note }: {
+function Slider({ label, value, min, max, step = 1, unit = '', onChange, color, note }: {
   label: string; value: number; min: number; max: number; step?: number
   unit?: string; onChange: (v: number) => void; color?: string; note?: string
 }) {
+  const U = useUI()
+  const c = color ?? U.accent
   return (
     <div className="mb-3">
       <div className="flex justify-between items-center mb-1">
-        <label className="text-xs text-slate-400">{label}</label>
+        <label className="text-xs" style={{ color: U.textMuted }}>{label}</label>
         <div className="text-right">
-          <span className="text-xs font-bold" style={{ color }}>{value}{unit ? ' ' + unit : ''}</span>
-          {note && <span className="text-xs ml-1.5 opacity-70" style={{ color }}>· {note}</span>}
+          <span className="text-xs font-bold" style={{ color: c }}>{value}{unit ? ' ' + unit : ''}</span>
+          {note && <span className="text-xs ml-1.5 opacity-70" style={{ color: c }}>· {note}</span>}
         </div>
       </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={ev => onChange(Number(ev.target.value))}
         className="w-full h-1.5 cursor-pointer rounded-full"
-        style={{ accentColor: color }}
+        style={{ accentColor: c }}
       />
     </div>
   )
@@ -382,13 +431,14 @@ function Slider({ label, value, min, max, step = 1, unit = '', onChange, color =
 
 // ── Toggle ────────────────────────────────────────────────
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
+  const U = useUI()
   return (
     <div className="flex items-center justify-between mb-3">
-      <span className="text-xs text-slate-400">{label}</span>
+      <span className="text-xs" style={{ color: U.textMuted }}>{label}</span>
       <button
         onClick={() => onChange(!value)}
         className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors"
-        style={{ background: value ? '#0891b2' : '#334155' }}
+        style={{ background: value ? U.accent : U.toggleOff }}
       >
         <span
           className="inline-block h-3.5 w-3.5 rounded-full bg-white transition-all"
@@ -403,23 +453,26 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 function NumberInput({ label, value, min, max, step, onChange }: {
   label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void
 }) {
+  const U = useUI()
   return (
     <div>
-      <label className="text-[10px] text-slate-500 block mb-1">{label}</label>
+      <label className="text-[10px] block mb-1" style={{ color: U.textFaint }}>{label}</label>
       <input
         type="number" min={min} max={max} step={step} value={value}
         onChange={ev => onChange(Number(ev.target.value))}
-        className="w-full bg-slate-950 border border-slate-800 text-white text-xs rounded-md px-2 py-1.5 outline-none focus:border-cyan-600"
+        className="w-full text-xs rounded-md px-2 py-1.5 outline-none border"
+        style={{ background: U.inputBg, borderColor: U.inputBorder, color: U.inputText }}
       />
     </div>
   )
 }
 
 // ── SectionTitle ──────────────────────────────────────────
-function SectionTitle({ children, color = '#475569' }: { children: React.ReactNode; color?: string }) {
+function SectionTitle({ children, color }: { children: React.ReactNode; color?: string }) {
+  const U = useUI()
   return (
-    <p className="text-[9px] font-bold uppercase tracking-widest mb-2.5 mt-4 pb-1.5 border-b border-slate-900"
-      style={{ color, letterSpacing: 2 }}>
+    <p className="text-[9px] font-bold uppercase tracking-widest mb-2.5 mt-4 pb-1.5 border-b"
+      style={{ color: color ?? U.textMuted, borderColor: U.border, letterSpacing: 2 }}>
       {children}
     </p>
   )
@@ -429,18 +482,20 @@ function SectionTitle({ children, color = '#475569' }: { children: React.ReactNo
 function DecelCard({ decel, index, onChange, onRemove }: {
   decel: Decel; index: number; onChange: (d: Decel) => void; onRemove: () => void
 }) {
+  const U = useUI()
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-2">
+    <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-cyan-400">Desacel. #{index + 1}</span>
-        <button onClick={onRemove} className="text-slate-600 hover:text-red-400 text-base leading-none transition-colors">×</button>
+        <span className="text-xs font-semibold" style={{ color: U.accent }}>Desacel. #{index + 1}</span>
+        <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
       </div>
       <div className="mb-2">
-        <label className="text-[10px] text-slate-500 block mb-1">Tipo</label>
+        <label className="text-[10px] block mb-1" style={{ color: U.textFaint }}>Tipo</label>
         <select
           value={decel.type}
           onChange={ev => onChange({ ...decel, type: ev.target.value as Decel['type'] })}
-          className="w-full bg-slate-900 border border-slate-800 text-white text-xs rounded-md px-2 py-1.5 outline-none focus:border-cyan-600"
+          className="w-full text-xs rounded-md px-2 py-1.5 outline-none border"
+          style={{ background: U.selectBg, borderColor: U.inputBorder, color: U.inputText }}
         >
           <option value="variable">Variable (barorreceptora)</option>
           <option value="late">Tardía (quimiorreceptora)</option>
@@ -461,11 +516,12 @@ function DecelCard({ decel, index, onChange, onRemove }: {
 function AccelCard({ accel, index, onChange, onRemove }: {
   accel: Accel; index: number; onChange: (a: Accel) => void; onRemove: () => void
 }) {
+  const U = useUI()
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-2">
+    <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-emerald-400">Acel. #{index + 1}</span>
-        <button onClick={onRemove} className="text-slate-600 hover:text-red-400 text-base leading-none transition-colors">×</button>
+        <span className="text-xs font-semibold text-emerald-500">Acel. #{index + 1}</span>
+        <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <NumberInput label="Inicio (min)"    value={accel.time}      min={0.5} max={60}  step={0.5} onChange={v => onChange({ ...accel, time: v })} />
@@ -480,11 +536,12 @@ function AccelCard({ accel, index, onChange, onRemove }: {
 function ContractionCard({ c, index, onChange, onRemove }: {
   c: Contraction; index: number; onChange: (c: Contraction) => void; onRemove: () => void
 }) {
+  const U = useUI()
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 mb-2">
+    <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-amber-400">Contracción #{index + 1}</span>
-        <button onClick={onRemove} className="text-slate-600 hover:text-red-400 text-base leading-none transition-colors">×</button>
+        <span className="text-xs font-semibold text-amber-500">Contracción #{index + 1}</span>
+        <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
       </div>
       <div className="grid grid-cols-3 gap-2">
         <NumberInput label="Inicio (min)"    value={c.time}      min={0.5} max={60}  step={0.5} onChange={v => onChange({ ...c, time: v })} />
@@ -533,7 +590,10 @@ export default function App() {
   const [artifactLevel,     setArtifactLevel]     = useState(0)
   const [artifactExpulsive, setArtifactExpulsive] = useState(true)
   const [paper,         setPaper]         = useState(true)
+  const [darkUI,        setDarkUI]        = useState(false)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'accels' | 'decels' | 'contracciones'>('trazado')
+
+  const U = darkUI ? uiThemeDark : uiThemeLight
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeSeg = segments.find(s => s.id === activeSegId) ?? segments[0]
@@ -596,22 +656,29 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#0B1120' }}>
+    <UICtx.Provider value={U}>
+    <div className="flex h-screen overflow-hidden" style={{ background: U.appBg }}>
 
       {/* ── SIDEBAR ── */}
-      <div className="w-68 shrink-0 flex flex-col border-r border-slate-900 overflow-y-auto" style={{ width: 272, background: '#0D1321' }}>
+      <div className="w-68 shrink-0 flex flex-col border-r overflow-y-auto" style={{ width: 272, background: U.panelBg, borderColor: U.border }}>
 
         {/* Header */}
-        <div className="px-4 py-3.5 border-b border-slate-900">
+        <div className="px-4 py-3.5 border-b" style={{ borderColor: U.border }}>
           <div className="flex items-center gap-2 mb-1">
-            <div className="w-2 h-2 rounded-full bg-cyan-400" style={{ boxShadow: '0 0 8px rgba(34,211,238,0.7)' }} />
-            <span className="text-sm font-bold text-white">CTG <span className="text-cyan-400">Creator</span></span>
+            <div className="w-2 h-2 rounded-full" style={{ background: U.accent, boxShadow: `0 0 8px ${U.accent}b3` }} />
+            <span className="text-sm font-bold" style={{ color: U.headerText }}>CTG <span style={{ color: U.accent }}>Creator</span></span>
+            <button
+              onClick={() => setDarkUI(v => !v)}
+              title={darkUI ? 'Cambiar a interfaz clara' : 'Cambiar a interfaz oscura'}
+              className="ml-auto text-sm leading-none rounded-md px-1.5 py-1 border transition-colors"
+              style={{ borderColor: U.borderStrong, color: U.textMuted }}
+            >{darkUI ? '☀️' : '🌙'}</button>
           </div>
-          <p className="text-[10px] text-slate-600">Haz clic en el trazado para agregar un punto de quiebre</p>
+          <p className="text-[10px]" style={{ color: U.textFaint }}>Haz clic en el trazado para agregar un punto de quiebre</p>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-900">
+        <div className="flex border-b" style={{ borderColor: U.border }}>
           {([
             { key: 'trazado',       label: 'Trazado' },
             { key: 'accels',        label: `Acel. (${accels.length})` },
@@ -623,8 +690,8 @@ export default function App() {
               onClick={() => setSidebarTab(tab.key)}
               className="flex-1 py-2 text-[9px] font-semibold border-b-2 transition-all"
               style={{
-                borderBottomColor: sidebarTab === tab.key ? '#22d3ee' : 'transparent',
-                color: sidebarTab === tab.key ? '#22d3ee' : '#475569',
+                borderBottomColor: sidebarTab === tab.key ? U.accent : 'transparent',
+                color: sidebarTab === tab.key ? U.accentActive : U.textFaint,
                 background: 'transparent'
               }}
             >{tab.label}</button>
@@ -647,10 +714,10 @@ export default function App() {
               onChange={setArtifactLevel}
             />
             <Toggle label="Concentrar en expulsivo" value={artifactExpulsive} onChange={setArtifactExpulsive} />
-            <p className="text-[10px] text-slate-700 -mt-1 mb-1">Simula la pérdida de contacto real (movimiento materno, pujo)</p>
+            <p className="text-[10px] -mt-1 mb-1" style={{ color: U.textFaint }}>Simula la pérdida de contacto real (movimiento materno, pujo)</p>
 
-            <SectionTitle color="#22d3ee">Puntos de quiebre ({segments.length})</SectionTitle>
-            <p className="text-[10px] text-slate-700 -mt-2 mb-2">Haz clic en el trazado para agregar</p>
+            <SectionTitle color={U.accent}>Puntos de quiebre ({segments.length})</SectionTitle>
+            <p className="text-[10px] -mt-2 mb-2" style={{ color: U.textFaint }}>Haz clic en el trazado para agregar</p>
 
             {segments.map(seg => (
               <div
@@ -658,18 +725,18 @@ export default function App() {
                 onClick={() => setActiveSegId(seg.id)}
                 className="px-3 py-2 rounded-lg mb-1.5 cursor-pointer border transition-all"
                 style={{
-                  borderColor: seg.id === activeSegId ? '#22d3ee' : '#1e293b',
-                  background:  seg.id === activeSegId ? 'rgba(34,211,238,0.05)' : 'rgba(15,23,42,0.5)'
+                  borderColor: seg.id === activeSegId ? U.segActiveBorder : U.segInactiveBorder,
+                  background:  seg.id === activeSegId ? U.segActiveBg : U.segInactiveBg
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold" style={{ color: seg.id === activeSegId ? '#22d3ee' : '#94a3b8' }}>
+                  <span className="text-xs font-semibold" style={{ color: seg.id === activeSegId ? U.accentActive : U.text }}>
                     {seg.time === 0 ? 'Inicio (min 0)' : `Desde min ${seg.time.toFixed(1)}`}
                   </span>
                   {seg.id !== 0 && (
                     <button
                       onClick={ev => { ev.stopPropagation(); removeSeg(seg.id) }}
-                      className="text-slate-600 hover:text-red-400 text-sm leading-none transition-colors"
+                      className="hover:text-red-400 text-sm leading-none transition-colors" style={{ color: U.textFaint }}
                     >×</button>
                   )}
                 </div>
@@ -685,10 +752,10 @@ export default function App() {
             {/* Active segment sliders */}
             {activeSeg && (
               <div className="mt-3 p-3 rounded-xl border" style={{
-                background: 'rgba(34,211,238,0.03)',
-                borderColor: 'rgba(34,211,238,0.15)'
+                background: U.editBg,
+                borderColor: U.editBorder
               }}>
-                <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest mb-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: U.accentActive }}>
                   {activeSeg.time === 0 ? 'Editando: inicio' : `Editando: desde min ${activeSeg.time.toFixed(1)}`}
                 </p>
                 <Slider
@@ -719,7 +786,7 @@ export default function App() {
         {sidebarTab === 'accels' && (
           <div className="flex-1 px-3.5 py-3">
             {accels.length === 0 && (
-              <p className="text-[10px] text-slate-600 mb-2">Aceleración: subida ≥ 15 lpm sobre la basal durante ≥ 15 s (feto de término).</p>
+              <p className="text-[10px] mb-2" style={{ color: U.textFaint }}>Aceleración: subida ≥ 15 lpm sobre la basal durante ≥ 15 s (feto de término).</p>
             )}
             {accels.map((a, i) => (
               <AccelCard
@@ -730,7 +797,8 @@ export default function App() {
             ))}
             <button
               onClick={() => setAccels(a => [...a, { time: parseFloat((duration * 0.3).toFixed(1)), amplitude: 20, duration: 30 }])}
-              className="w-full py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 text-xs hover:border-emerald-600 hover:text-emerald-500 transition-colors mt-1"
+              className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-emerald-500 hover:text-emerald-500 transition-colors mt-1"
+              style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar aceleración</button>
           </div>
         )}
@@ -747,7 +815,8 @@ export default function App() {
             ))}
             <button
               onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45 }])}
-              className="w-full py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 text-xs hover:border-cyan-600 hover:text-cyan-500 transition-colors mt-1"
+              className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-cyan-500 hover:text-cyan-500 transition-colors mt-1"
+              style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar desaceleración</button>
           </div>
         )}
@@ -764,19 +833,22 @@ export default function App() {
             ))}
             <button
               onClick={() => setContractions(c => [...c, { time: parseFloat((duration * 0.3).toFixed(1)), duration: 0.8, amplitude: 80 }])}
-              className="w-full py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 text-xs hover:border-amber-500 hover:text-amber-400 transition-colors mt-1"
+              className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-amber-500 hover:text-amber-500 transition-colors mt-1"
+              style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar contracción</button>
           </div>
         )}
 
         {/* Export */}
-        <div className="px-3.5 py-3 border-t border-slate-900 space-y-2">
+        <div className="px-3.5 py-3 border-t space-y-2" style={{ borderColor: U.border }}>
           <button onClick={exportJSON}
-            className="w-full py-2.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-semibold transition-colors">
+            className="w-full py-2.5 rounded-lg text-white text-xs font-semibold transition-colors"
+            style={{ background: U.exportPrimaryBg }}>
             ↓  Exportar JSON
           </button>
           <button onClick={exportPNG}
-            className="w-full py-2.5 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white text-xs font-semibold transition-colors">
+            className="w-full py-2.5 rounded-lg border text-xs font-semibold transition-colors"
+            style={{ borderColor: U.borderStrong, color: U.exportSecondaryText }}>
             ↓  Exportar PNG
           </button>
         </div>
@@ -786,23 +858,23 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* Top bar */}
-        <div className="px-5 py-2.5 border-b border-slate-900 flex items-center gap-4 shrink-0" style={{ background: '#0D1321' }}>
-          <span className="text-[10px] text-slate-700 font-bold uppercase tracking-widest">Vista previa</span>
-          <span className="text-xs font-bold" style={{ color: '#6EE7FF' }}>FCF {activeSeg?.baseline ?? 140} lpm</span>
+        <div className="px-5 py-2.5 border-b flex items-center gap-4 shrink-0" style={{ background: U.panelBg, borderColor: U.border }}>
+          <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: U.textFaint }}>Vista previa</span>
+          <span className="text-xs font-bold" style={{ color: darkUI ? '#6EE7FF' : '#0e7490' }}>FCF {activeSeg?.baseline ?? 140} lpm</span>
           <span className="text-xs font-semibold" style={{ color: varColor(activeSeg?.varAmp ?? 8) }}>
             Var. {varLabel(activeSeg?.varAmp ?? 8)}
           </span>
-          {segments.length > 1 && <span className="text-xs text-cyan-600">{segments.length} segmentos</span>}
-          {accels.length > 0 && <span className="text-xs text-emerald-400">{accels.length} acel.</span>}
-          {decels.length > 0 && <span className="text-xs text-purple-400">{decels.length} desacel.</span>}
+          {segments.length > 1 && <span className="text-xs" style={{ color: U.accentActive }}>{segments.length} segmentos</span>}
+          {accels.length > 0 && <span className="text-xs text-emerald-500">{accels.length} acel.</span>}
+          {decels.length > 0 && <span className="text-xs text-purple-500">{decels.length} desacel.</span>}
           {contractions.length > 0 && <span className="text-xs text-amber-500">{contractions.length} contrac.</span>}
-          <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full border border-slate-800 text-slate-600">
+          <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full border" style={{ borderColor: U.borderStrong, color: U.textMuted }}>
             clic en el trazado → punto de quiebre
           </span>
         </div>
 
         {/* Canvas */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 overflow-auto p-4" style={{ background: U.canvasArea }}>
           <div
             className="relative inline-block"
             style={{ minWidth: '100%', cursor: 'crosshair' }}
@@ -821,11 +893,12 @@ export default function App() {
         </div>
 
         {/* Bottom bar */}
-        <div className="px-5 py-1.5 border-t border-slate-900 flex items-center">
-          <span className="text-[9px] text-slate-800">■ FCF cian  ·  ■ TOCO ámbar  ·  Escala 1 cm/min  ·  ▲ = marcador de segmento</span>
-          <span className="ml-auto text-[9px] text-slate-800">CTG Creator — FetalPhysio Tools</span>
+        <div className="px-5 py-1.5 border-t flex items-center" style={{ background: U.panelBg, borderColor: U.border }}>
+          <span className="text-[9px]" style={{ color: U.textFaint }}>■ FCF  ·  ■ TOCO  ·  Escala 1 cm/min  ·  ▲ = marcador de segmento</span>
+          <span className="ml-auto text-[9px]" style={{ color: U.textFaint }}>CTG Creator — FetalPhysio Tools</span>
         </div>
       </div>
     </div>
+    </UICtx.Provider>
   )
 }
