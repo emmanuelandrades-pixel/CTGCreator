@@ -15,7 +15,8 @@ interface Segment {
   id: number
   time: number
   baseline: number
-  varAmp: number
+  varAmp: number   // amplitud pico-a-valle de variabilidad, en lpm (se lee en la graduación)
+  stv: number      // textura / STV a corto plazo: 0 = liso (sinusoidal) … 1 = dentado (saltatorio)
 }
 interface Decel {
   type: 'variable' | 'late' | 'early' | 'prolonged'
@@ -99,6 +100,12 @@ const varColor = (amp: number) => {
   if (amp <= 25) return '#22d3ee'
   return '#a78bfa'
 }
+const stvLabel = (k: number) => {
+  if (k < 0.12) return 'Liso · sinusoidal'
+  if (k < 0.45) return 'Suave'
+  if (k < 0.75) return 'Dentado'
+  return 'Saltatorio'
+}
 
 // ── Segment interpolation ─────────────────────────────────
 function getSegmentValues(segments: Segment[], t: number) {
@@ -109,26 +116,39 @@ function getSegmentValues(segments: Segment[], t: number) {
   }
   const cur  = segments[idx]
   const next = segments[idx + 1]
-  if (!next) return { baseline: cur.baseline, varAmp: cur.varAmp }
+  if (!next) return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv }
   const transStart = next.time - TRANSITION_MIN
   if (t >= transStart) {
     const p = smoothstep(0, 1, (t - transStart) / TRANSITION_MIN)
-    return { baseline: lerp(cur.baseline, next.baseline, p), varAmp: lerp(cur.varAmp, next.varAmp, p) }
+    return {
+      baseline: lerp(cur.baseline, next.baseline, p),
+      varAmp:   lerp(cur.varAmp, next.varAmp, p),
+      stv:      lerp(cur.stv ?? 0.35, next.stv ?? 0.35, p),
+    }
   }
-  return { baseline: cur.baseline, varAmp: cur.varAmp }
+  return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv ?? 0.35 }
 }
 
 // ── Waveform utils ────────────────────────────────────────
-// VAR_CAL calibra la salida para que varAmp (slider) ≈ amplitud de banda real
-// en lpm (p10–p90), según trazados reales CTU-CHB: disminuida ~4, normal ~8,
-// marcada ~28. Sin él, el motor dibujaba ~2.5× más plano que el valor del slider.
-const VAR_CAL = 2.56
-const variabilityAt = (x: number, amp: number) => {
-  const slow = Math.sin(x / 17) + 0.6 * Math.sin(x / 6.3) + 0.4 * Math.sin(x / 2.7)
-  const beat = hash(x) * 1.2
-  return ((slow / 2.0) + beat * 0.5) * (amp / 2) * VAR_CAL
+// Modelo de variabilidad de dos componentes, calibrado contra papel real (1 cm/min):
+//   - slow  = ondulación lenta (variabilidad a largo plazo, LTV)
+//   - beat  = jitter fino (variabilidad a corto plazo, STV)
+// Cada componente está normalizado para que su banda pico-a-valle POR MINUTO sea 1,
+// por lo que `amp` (varAmp) = amplitud pico-a-valle en lpm → se lee directo en la
+// graduación (ej. 28 lpm ≈ 2,8 celdas de 10 lpm). El mezclador `k` (STV/textura)
+// va de 0 (liso, sinusoidal) a 1 (dentado, saltatorio); corr(k) mantiene la banda
+// constante al cambiar la textura. Referencias CTU-CHB: reducida ~4, normal ~15, marcada ~40.
+const SLOW_NORM = 1.697
+const BEAT_NORM = 0.940
+const variabilityAt = (x: number, amp: number, k: number) => {
+  const slow = (Math.sin(x / 17) + 0.6 * Math.sin(x / 6.3) + 0.4 * Math.sin(x / 2.7)) / SLOW_NORM
+  const beat = hash(x) / BEAT_NORM
+  const corr = 1 / Math.sqrt((1 - k) * (1 - k) + k * k)
+  return ((1 - k) * slow + k * beat) * corr * amp
 }
-const cyclingFactor = (min: number) => 0.35 + 0.65 * (0.5 + 0.5 * Math.sin((min / 4) * Math.PI))
+// Cycling suave: modula la amplitud entre 0.82 y 1.0 (mediana ~0.91), un descenso
+// fisiológico leve en sueño quieto sin achatar el trazado bajo el valor del slider.
+const cyclingFactor = (min: number) => 0.82 + 0.18 * (0.5 + 0.5 * Math.sin((min / 4) * Math.PI))
 
 // ── Deceleration drop ─────────────────────────────────────
 function decelDropAt(t: number, x: number, decels: Decel[]) {
@@ -326,7 +346,7 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
     }
     const sv   = getSegmentValues(segments, t)
     const cf   = cycling ? cyclingFactor(t) : 1
-    const v    = variabilityAt(x * 0.5, sv.varAmp * cf)
+    const v    = variabilityAt(x * 0.5, sv.varAmp * cf, sv.stv)
     const drop = decelDropAt(t, x, decels)
     const rise = accelRiseAt(t, x, accels)
     let fhr = drop > 15
@@ -509,7 +529,7 @@ function YAxis({ paper }: { paper: boolean }) {
 let nextId = 1
 
 export default function App() {
-  const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 8 }])
+  const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 12, stv: 0.35 }])
   const [activeSegId,   setActiveSegId]   = useState(0)
   const [cycling,       setCycling]       = useState(true)
   const [accels,        setAccels]        = useState<Accel[]>([])
@@ -556,7 +576,8 @@ export default function App() {
       id:       nextId++,
       time:     t,
       baseline: Math.round(inherited.baseline),
-      varAmp:   Math.round(inherited.varAmp * 10) / 10
+      varAmp:   Math.round(inherited.varAmp * 10) / 10,
+      stv:      inherited.stv,
     }
     setSegments(prev => [...prev, newSeg].sort((a, b) => a.time - b.time))
     setActiveSegId(newSeg.id)
@@ -683,11 +704,18 @@ export default function App() {
                   onChange={v => updateSeg('baseline', v)}
                 />
                 <Slider
-                  label="Variabilidad" value={activeSeg.varAmp}
-                  min={0} max={40} step={0.5} unit="lpm"
+                  label="Variabilidad (amplitud)" value={activeSeg.varAmp}
+                  min={0} max={50} step={0.5} unit="lpm"
                   color={varColor(activeSeg.varAmp)}
                   note={varLabel(activeSeg.varAmp)}
                   onChange={v => updateSeg('varAmp', v)}
+                />
+                <Slider
+                  label="STV / textura" value={Math.round((activeSeg.stv ?? 0.35) * 100)}
+                  min={0} max={100} step={5} unit="%"
+                  color="#38bdf8"
+                  note={stvLabel(activeSeg.stv ?? 0.35)}
+                  onChange={v => updateSeg('stv', v / 100)}
                 />
               </div>
             )}
