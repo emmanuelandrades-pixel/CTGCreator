@@ -355,17 +355,26 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
       ctx.fillText(String(fhr), m * PX_PER_MIN - 4, y + 4)
     })
   }
-  // Escala TOCO en kPa reimpresa cada 5 min (papel chileno: mmHg principal + kPa 2ª)
+  // Escala TOCO reimpresa cada 5 min, ALTERNANDO mmHg / kPa (papel chileno):
+  // eje izq (0') mmHg · 5' kPa · 10' mmHg · 15' kPa …  Unidad al pie de cada columna.
   // 1 kPa = 7.5 mmHg → kPa 2,4,…12 en mmHg 15,30,…90
   ctx.font = '8px system-ui'; ctx.textAlign = 'right'
   for (let m = 5; m <= duration; m += 5) {
-    ;[2, 4, 6, 8, 10, 12].forEach(kpa => {
-      const y = tocoToPx(kpa * 7.5)
+    const xr = m * PX_PER_MIN
+    const isKpa = (m / 5) % 2 === 1   // 5,15,25 → kPa ; 10,20 → mmHg
+    const ticks = isKpa ? [2, 4, 6, 8, 10, 12] : [25, 50, 75, 100]
+    const unit  = isKpa ? 'kPa' : 'mmHg'
+    ticks.forEach(v => {
+      const y = tocoToPx(isKpa ? v * 7.5 : v)
       ctx.fillStyle = th.fhrLabelBox
-      ctx.fillRect(m * PX_PER_MIN - 22, y - 6, 20, 12)
+      ctx.fillRect(xr - 22, y - 6, 20, 12)
       ctx.fillStyle = th.tocoLabel
-      ctx.fillText(String(kpa), m * PX_PER_MIN - 4, y + 3)
+      ctx.fillText(String(v), xr - 4, y + 3)
     })
+    ctx.fillStyle = th.fhrLabelBox
+    ctx.fillRect(xr - 28, TOCO_BOTTOM - 11, 28, 11)
+    ctx.fillStyle = th.tocoLabel
+    ctx.fillText(unit, xr - 4, TOCO_BOTTOM - 2)
   }
 
   // Segment markers
@@ -595,15 +604,15 @@ function YAxis({ paper }: { paper: boolean }) {
           textAlign: 'right', fontSize: 9, color: fhrC
         }}>{fhr}</div>
       ))}
-      {/* Graduación TOCO en mmHg (escala principal, papel chileno) */}
-      {[100, 75, 50, 25, 0].map(mmhg => (
+      {/* Graduación TOCO en mmHg (escala principal, papel chileno); unidad abajo */}
+      {[100, 75, 50, 25].map(mmhg => (
         <div key={'t' + mmhg} style={{
           position: 'absolute', top: tocoToPx(mmhg) - 6, left: 0, width: AXIS_W - 4,
           textAlign: 'right', fontSize: 8, color: uaC
         }}>{mmhg}</div>
       ))}
       <div style={{
-        position: 'absolute', top: TOCO_TOP - 13, left: 0, width: AXIS_W - 4,
+        position: 'absolute', top: TOCO_BOTTOM - 10, left: 0, width: AXIS_W - 4,
         textAlign: 'right', fontSize: 7, color: uaC, fontWeight: 'bold'
       }}>mmHg</div>
     </div>
