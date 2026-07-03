@@ -81,6 +81,13 @@ interface Contraction {
   duration: number
   amplitude: number
 }
+interface TocoSegment {
+  id: number
+  time: number
+  tone: number     // tono uterino basal, en mmHg (hipotonía/hipertonía por tramo)
+  noise: number    // 0–100, ruido fino continuo de la línea TOCO
+  artifact: number // 0–100, probabilidad de pérdida real de señal (pen-up) del transductor
+}
 interface CTGConfig {
   segments: Segment[]
   accels: Accel[]
@@ -91,9 +98,8 @@ interface CTGConfig {
   artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto FCF
   artifactExpulsive: boolean // concentrar el artefacto FCF hacia el expulsivo (final)
   paper: boolean             // estilo papel real (true) o pantalla oscura (false)
-  tocoTone: number           // tono uterino basal, en mmHg
-  tocoNoise: number          // 0–100, ruido fino continuo de la línea TOCO
-  tocoArtifact: number       // 0–100, ráfagas de artefacto del transductor TOCO
+  tocoSegments: TocoSegment[]
+  activeTocoSegTime: number
 }
 
 // ── Maths ─────────────────────────────────────────────────
@@ -178,6 +184,28 @@ function getSegmentValues(segments: Segment[], t: number) {
     }
   }
   return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv ?? 0.35 }
+}
+
+// ── TOCO segment interpolation (tono/ruido/artefacto por tramo) ──
+function getTocoSegmentValues(tocoSegments: TocoSegment[], t: number) {
+  let idx = 0
+  for (let i = 0; i < tocoSegments.length; i++) {
+    if (tocoSegments[i].time <= t) idx = i
+    else break
+  }
+  const cur  = tocoSegments[idx]
+  const next = tocoSegments[idx + 1]
+  if (!next) return { tone: cur.tone, noise: cur.noise, artifact: cur.artifact }
+  const transStart = next.time - TRANSITION_MIN
+  if (t >= transStart) {
+    const p = smoothstep(0, 1, (t - transStart) / TRANSITION_MIN)
+    return {
+      tone:     lerp(cur.tone, next.tone, p),
+      noise:    lerp(cur.noise, next.noise, p),
+      artifact: lerp(cur.artifact, next.artifact, p),
+    }
+  }
+  return { tone: cur.tone, noise: cur.noise, artifact: cur.artifact }
 }
 
 // ── Waveform utils ────────────────────────────────────────
@@ -306,28 +334,27 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
 // ── TOCO: ruido de línea y artefacto ──────────────────────
 // La traza de TOCO real nunca es perfectamente lisa: hay un temblor fino
 // continuo (tono uterino inquieto, respiración materna) que `tocoNoiseAt`
-// reproduce mezclando dos frecuencias de hash. `tocoArtifactAt` añade
-// perturbaciones más bruscas y esporádicas (el transductor externo se
-// mueve/pierde apoyo), agrupadas en ráfagas cortas, para mayor realismo.
+// reproduce mezclando dos frecuencias de hash. `tocoSignalLost` modela
+// pérdida real de señal del transductor externo (se despega/mueve el
+// cinturón) igual que `signalLost` para la FCF: el trazo se interrumpe
+// (pen-up) en vez de solo añadir ruido.
 const tocoNoiseAt = (x: number, amt: number) => {
   const n1 = hash(x * 0.05) * 1.5
   const n2 = hash(x * 0.37) * 0.7
   return (n1 + n2) * (amt / 40)
 }
-function tocoArtifactAt(t: number, x: number, amt: number) {
-  if (amt <= 0) return 0
-  const p = amt / 100
-  const zone = hash(Math.floor(t * 2) * 0.31) + 0.5
-  if (zone < 0.25 + 0.5 * p) {
-    const spike = hash(x * 3.1)
-    return spike * 14 * p
-  }
-  return 0
+function tocoSignalLost(t: number, level: number) {
+  if (level <= 0) return false
+  const p = level / 100
+  const zone = hash(Math.floor(t * 3) * 0.19) + 0.5
+  if (zone > 0.3 + 0.6 * p) return false
+  const sub = hash(Math.floor(t * 20) * 1.3) + 0.5
+  return sub < 0.35 + 0.55 * p
 }
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper, tocoTone, tocoNoise, tocoArtifact } = config
+  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper, tocoSegments, activeTocoSegTime } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -418,22 +445,48 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
     ctx.fillText(seg.time.toFixed(1) + "'", x + 4, FHR_TOP + 3)
   })
 
+  // TOCO segment markers (tono/ruido/artefacto) — triángulo hacia abajo, color ámbar
+  tocoSegments.slice(1).forEach(seg => {
+    const x = seg.time * PX_PER_MIN
+    const isActive = seg.time === activeTocoSegTime
+    ctx.strokeStyle = isActive ? 'rgba(245,158,11,0.8)' : 'rgba(245,158,11,0.3)'
+    ctx.lineWidth   = isActive ? 1.5 : 1
+    ctx.setLineDash([4, 4])
+    ctx.beginPath(); ctx.moveTo(x, TOCO_TOP - 6); ctx.lineTo(x, TOCO_BOTTOM + 8); ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = isActive ? 'rgba(245,158,11,0.95)' : 'rgba(245,158,11,0.45)'
+    ctx.beginPath(); ctx.moveTo(x - 5, TOCO_BOTTOM + 8); ctx.lineTo(x + 5, TOCO_BOTTOM + 8); ctx.lineTo(x, TOCO_BOTTOM - 2); ctx.closePath(); ctx.fill()
+    ctx.fillStyle = isActive ? '#b45309' : 'rgba(180,83,9,0.5)'
+    ctx.font = 'bold 9px system-ui'; ctx.textAlign = 'left'
+    ctx.fillText(seg.time.toFixed(1) + "'", x + 4, TOCO_BOTTOM + 6)
+  })
+
   // TOCO
-  const tocoPath: number[] = []
+  const tocoPath: { v: number; lost: boolean }[] = []
   for (let x = 0; x < W; x++) {
-    const t = x / PX_PER_MIN
-    let toco = tocoTone + tocoNoiseAt(x, tocoNoise) + tocoArtifactAt(t, x, tocoArtifact)
+    const t  = x / PX_PER_MIN
+    const tv = getTocoSegmentValues(tocoSegments, t)
+    let toco = tv.tone + tocoNoiseAt(x, tv.noise)
     contractions.forEach(c => { toco += gaussian(t, c.time, c.duration * 0.48, c.amplitude) })
-    tocoPath.push(clamp(toco, 0, 100))
+    const lost = tv.artifact > 0 && tocoSignalLost(t, tv.artifact)
+    tocoPath.push({ v: clamp(toco, 0, 100), lost })
   }
-  ctx.strokeStyle = th.toco; ctx.lineWidth = 1.5
-  ctx.beginPath()
-  tocoPath.forEach((v, x) => { const y = tocoToPx(v); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
-  ctx.stroke()
+  // Relleno bajo la curva: silueta continua (representa la actividad uterina real,
+  // independiente de si el transductor perdió contacto)
   ctx.fillStyle = th.tocoFill
   ctx.beginPath()
-  tocoPath.forEach((v, x) => { const y = tocoToPx(v); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
+  tocoPath.forEach((p, x) => { const y = tocoToPx(p.v); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
   ctx.lineTo(W, TOCO_BOTTOM); ctx.lineTo(0, TOCO_BOTTOM); ctx.closePath(); ctx.fill()
+  // Trazo: se interrumpe (pen-up) donde hay pérdida real de señal por artefacto
+  ctx.strokeStyle = th.toco; ctx.lineWidth = 1.5
+  ctx.beginPath()
+  let tocoPenDown = false
+  tocoPath.forEach((p, x) => {
+    if (p.lost) { tocoPenDown = false; return }
+    const y = tocoToPx(p.v)
+    if (!tocoPenDown) { ctx.moveTo(x, y); tocoPenDown = true } else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
 
   // FHR
   ctx.strokeStyle = th.fhr; ctx.lineWidth = 1.8
@@ -646,6 +699,7 @@ function YAxis({ paper }: { paper: boolean }) {
 
 // ── App ───────────────────────────────────────────────────
 let nextId = 1
+let nextTocoId = 1
 
 export default function App() {
   const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 12, stv: 0.35 }])
@@ -656,9 +710,8 @@ export default function App() {
   const [contractions,  setContractions]  = useState<Contraction[]>([])
   const [artifactLevel,     setArtifactLevel]     = useState(0)
   const [artifactExpulsive, setArtifactExpulsive] = useState(true)
-  const [tocoTone,      setTocoTone]      = useState(10)
-  const [tocoNoise,     setTocoNoise]     = useState(35)
-  const [tocoArtifact,  setTocoArtifact]  = useState(0)
+  const [tocoSegments,    setTocoSegments]    = useState<TocoSegment[]>([{ id: 0, time: 0, tone: 10, noise: 35, artifact: 0 }])
+  const [activeTocoSegId, setActiveTocoSegId] = useState(0)
   const [paper,         setPaper]         = useState(true)
   const [darkUI,        setDarkUI]        = useState(false)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'accels' | 'decels' | 'contracciones'>('trazado')
@@ -667,6 +720,7 @@ export default function App() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const activeSeg = segments.find(s => s.id === activeSegId) ?? segments[0]
+  const activeTocoSeg = tocoSegments.find(s => s.id === activeTocoSegId) ?? tocoSegments[0]
 
   useEffect(() => {
     if (!canvasRef.current) return
@@ -674,20 +728,48 @@ export default function App() {
       segments, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
       artifactLevel, artifactExpulsive, paper,
-      tocoTone, tocoNoise, tocoArtifact
+      tocoSegments, activeTocoSegTime: activeTocoSeg?.time ?? 0,
     })
-  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper, tocoTone, tocoNoise, tocoArtifact])
+  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper, tocoSegments, activeTocoSegId])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
+  }
+  const updateTocoSeg = (field: keyof TocoSegment, value: number) => {
+    setTocoSegments(prev => prev.map(s => s.id === activeTocoSegId ? { ...s, [field]: value } : s))
   }
 
   const handleCanvasClick = useCallback((ev: React.MouseEvent<HTMLDivElement>) => {
     if (!canvasRef.current) return
     const rect = canvasRef.current.getBoundingClientRect()
     const px   = ev.clientX - rect.left
+    const py   = ev.clientY - rect.top
     const t    = parseFloat((px / PX_PER_MIN).toFixed(1))
     if (t < 0.1 || t > duration - 0.1) return
+
+    const inTocoPanel = py > (FHR_BOTTOM + TOCO_TOP) / 2
+
+    if (inTocoPanel) {
+      const tooClose = tocoSegments.some(s => Math.abs(s.time - t) < 0.3)
+      if (tooClose) {
+        const nearest = tocoSegments.reduce((a, b) => Math.abs(a.time - t) < Math.abs(b.time - t) ? a : b)
+        setActiveTocoSegId(nearest.id)
+        setSidebarTab('contracciones')
+        return
+      }
+      const inherited = getTocoSegmentValues(tocoSegments, t)
+      const newSeg: TocoSegment = {
+        id:       nextTocoId++,
+        time:     t,
+        tone:     Math.round(inherited.tone),
+        noise:    Math.round(inherited.noise),
+        artifact: Math.round(inherited.artifact),
+      }
+      setTocoSegments(prev => [...prev, newSeg].sort((a, b) => a.time - b.time))
+      setActiveTocoSegId(newSeg.id)
+      setSidebarTab('contracciones')
+      return
+    }
 
     const tooClose = segments.some(s => Math.abs(s.time - t) < 0.3)
     if (tooClose) {
@@ -707,19 +789,24 @@ export default function App() {
     setSegments(prev => [...prev, newSeg].sort((a, b) => a.time - b.time))
     setActiveSegId(newSeg.id)
     setSidebarTab('trazado')
-  }, [segments, duration])
+  }, [segments, tocoSegments, duration])
 
   const removeSeg = (id: number) => {
     if (id === 0) return
     setSegments(prev => prev.filter(s => s.id !== id))
     setActiveSegId(0)
   }
+  const removeTocoSeg = (id: number) => {
+    if (id === 0) return
+    setTocoSegments(prev => prev.filter(s => s.id !== id))
+    setActiveTocoSegId(0)
+  }
 
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify({
       segments, accels, duration, decels, contractions,
       artifact: { level: artifactLevel, expulsive: artifactExpulsive },
-      toco: { tone: tocoTone, noise: tocoNoise, artifact: tocoArtifact },
+      tocoSegments,
     }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
@@ -749,7 +836,7 @@ export default function App() {
               style={{ borderColor: U.borderStrong, color: U.textMuted }}
             >{darkUI ? '☀️' : '🌙'}</button>
           </div>
-          <p className="text-[10px]" style={{ color: U.textFaint }}>Haz clic en el trazado para agregar un punto de quiebre</p>
+          <p className="text-[10px]" style={{ color: U.textFaint }}>Clic en el panel FCF o TOCO del trazado para agregar un punto de quiebre</p>
         </div>
 
         {/* Tabs */}
@@ -899,24 +986,63 @@ export default function App() {
         {/* ── Contracciones tab ── */}
         {sidebarTab === 'contracciones' && (
           <div className="flex-1 px-3.5 py-3">
-            <SectionTitle color="#f59e0b">Motor general de contracciones</SectionTitle>
-            <Slider
-              label="Tono uterino (basal)" value={tocoTone}
-              min={0} max={30} step={1} unit="mmHg" color="#f59e0b"
-              onChange={setTocoTone}
-            />
-            <Slider
-              label="Ruido de línea" value={tocoNoise}
-              min={0} max={100} step={5} unit="%" color="#f59e0b"
-              note={tocoNoise === 0 ? 'Lisa' : tocoNoise <= 40 ? 'Sutil' : tocoNoise <= 70 ? 'Visible' : 'Marcado'}
-              onChange={setTocoNoise}
-            />
-            <Slider
-              label="Artefacto (transductor)" value={tocoArtifact}
-              min={0} max={100} step={5} unit="%" color="#f59e0b"
-              note={tocoArtifact === 0 ? 'Limpio' : tocoArtifact <= 40 ? 'Leve' : tocoArtifact <= 70 ? 'Moderado' : 'Marcado'}
-              onChange={setTocoArtifact}
-            />
+            <SectionTitle color="#f59e0b">Motor general TOCO ({tocoSegments.length})</SectionTitle>
+            <p className="text-[10px] -mt-2 mb-2" style={{ color: U.textFaint }}>Haz clic en el panel TOCO del trazado para agregar un punto de quiebre</p>
+
+            {tocoSegments.map(seg => (
+              <div
+                key={seg.id}
+                onClick={() => setActiveTocoSegId(seg.id)}
+                className="px-3 py-2 rounded-lg mb-1.5 cursor-pointer border transition-all"
+                style={{
+                  borderColor: seg.id === activeTocoSegId ? '#f59e0b' : U.segInactiveBorder,
+                  background:  seg.id === activeTocoSegId ? 'rgba(245,158,11,0.08)' : U.segInactiveBg
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold" style={{ color: seg.id === activeTocoSegId ? '#b45309' : U.text }}>
+                    {seg.time === 0 ? 'Inicio (min 0)' : `Desde min ${seg.time.toFixed(1)}`}
+                  </span>
+                  {seg.id !== 0 && (
+                    <button
+                      onClick={ev => { ev.stopPropagation(); removeTocoSeg(seg.id) }}
+                      className="hover:text-red-400 text-sm leading-none transition-colors" style={{ color: U.textFaint }}
+                    >×</button>
+                  )}
+                </div>
+                <div className="flex gap-3 mt-1">
+                  <span className="text-[10px] text-amber-600">Tono {seg.tone} mmHg</span>
+                  <span className="text-[10px]" style={{ color: U.textFaint }}>Ruido {seg.noise}%</span>
+                  <span className="text-[10px]" style={{ color: U.textFaint }}>Artef. {seg.artifact}%</span>
+                </div>
+              </div>
+            ))}
+
+            {activeTocoSeg && (
+              <div className="mt-3 p-3 rounded-xl border" style={{ background: 'rgba(245,158,11,0.05)', borderColor: 'rgba(245,158,11,0.25)' }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: '#b45309' }}>
+                  {activeTocoSeg.time === 0 ? 'Editando: inicio' : `Editando: desde min ${activeTocoSeg.time.toFixed(1)}`}
+                </p>
+                <Slider
+                  label="Tono uterino (basal)" value={activeTocoSeg.tone}
+                  min={0} max={30} step={1} unit="mmHg" color="#f59e0b"
+                  note={activeTocoSeg.tone < 8 ? 'Hipotónico' : activeTocoSeg.tone > 15 ? 'Hipertónico' : 'Normal'}
+                  onChange={v => updateTocoSeg('tone', v)}
+                />
+                <Slider
+                  label="Ruido de línea" value={activeTocoSeg.noise}
+                  min={0} max={100} step={5} unit="%" color="#f59e0b"
+                  note={activeTocoSeg.noise === 0 ? 'Lisa' : activeTocoSeg.noise <= 40 ? 'Sutil' : activeTocoSeg.noise <= 70 ? 'Visible' : 'Marcado'}
+                  onChange={v => updateTocoSeg('noise', v)}
+                />
+                <Slider
+                  label="Artefacto (pérdida de señal)" value={activeTocoSeg.artifact}
+                  min={0} max={100} step={5} unit="%" color="#f59e0b"
+                  note={activeTocoSeg.artifact === 0 ? 'Limpio' : activeTocoSeg.artifact <= 40 ? 'Leve' : activeTocoSeg.artifact <= 70 ? 'Moderado' : 'Marcado'}
+                  onChange={v => updateTocoSeg('artifact', v)}
+                />
+              </div>
+            )}
 
             <SectionTitle color="#f59e0b">Contracciones ({contractions.length})</SectionTitle>
             {contractions.map((c, i) => (
@@ -963,11 +1089,12 @@ export default function App() {
             Var. {varLabel(activeSeg?.varAmp ?? 8)}
           </span>
           {segments.length > 1 && <span className="text-xs" style={{ color: U.accentActive }}>{segments.length} segmentos</span>}
+          {tocoSegments.length > 1 && <span className="text-xs text-amber-600">{tocoSegments.length} tramos TOCO</span>}
           {accels.length > 0 && <span className="text-xs text-emerald-500">{accels.length} acel.</span>}
           {decels.length > 0 && <span className="text-xs text-purple-500">{decels.length} desacel.</span>}
           {contractions.length > 0 && <span className="text-xs text-amber-500">{contractions.length} contrac.</span>}
           <span className="ml-auto text-[10px] px-2.5 py-1 rounded-full border" style={{ borderColor: U.borderStrong, color: U.textMuted }}>
-            clic en el trazado → punto de quiebre
+            clic en FCF/TOCO → punto de quiebre
           </span>
         </div>
 
