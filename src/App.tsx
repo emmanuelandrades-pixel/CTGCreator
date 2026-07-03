@@ -185,10 +185,21 @@ function getSegmentValues(segments: Segment[], t: number) {
 // va de 0 (liso, sinusoidal) a 1 (dentado, saltatorio); corr(k) mantiene la banda
 // constante al cambiar la textura. Referencias CTU-CHB: reducida ~4, normal ~15, marcada ~40.
 const SLOW_NORM = 1.697
-const BEAT_NORM = 0.940
+const BEAT_NORM = 0.836
+// BEAT_PERIOD controla la separación de los "dientes" del jitter: ruido de valor
+// (hash en rejilla gruesa + smoothstep) en vez de ruido por píxel. P=1.2 → ~6.5
+// dientes/min, como en trazados reales (1001 min19-21), evitando el aspecto de
+// serrucho con dientes demasiado juntos que daba el hash por píxel (~60/min).
+const BEAT_PERIOD = 1.2
+const valueNoise = (x: number) => {
+  const i = Math.floor(x / BEAT_PERIOD)
+  const f = x / BEAT_PERIOD - i
+  const u = f * f * (3 - 2 * f)
+  return hash(i) + (hash(i + 1) - hash(i)) * u
+}
 const variabilityAt = (x: number, amp: number, k: number) => {
   const slow = (Math.sin(x / 17) + 0.6 * Math.sin(x / 6.3) + 0.4 * Math.sin(x / 2.7)) / SLOW_NORM
-  const beat = hash(x) / BEAT_NORM
+  const beat = valueNoise(x) / BEAT_NORM
   const corr = 1 / Math.sqrt((1 - k) * (1 - k) + k * k)
   return ((1 - k) * slow + k * beat) * corr * amp
 }
