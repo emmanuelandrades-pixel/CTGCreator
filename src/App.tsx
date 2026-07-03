@@ -36,7 +36,6 @@ interface Contraction {
 }
 interface CTGConfig {
   segments: Segment[]
-  cycling: boolean
   accels: Accel[]
   duration: number
   decels: Decel[]
@@ -146,9 +145,6 @@ const variabilityAt = (x: number, amp: number, k: number) => {
   const corr = 1 / Math.sqrt((1 - k) * (1 - k) + k * k)
   return ((1 - k) * slow + k * beat) * corr * amp
 }
-// Cycling suave: modula la amplitud entre 0.82 y 1.0 (mediana ~0.91), un descenso
-// fisiológico leve en sueño quieto sin achatar el trazado bajo el valor del slider.
-const cyclingFactor = (min: number) => 0.82 + 0.18 * (0.5 + 0.5 * Math.sin((min / 4) * Math.PI))
 
 // ── Deceleration drop ─────────────────────────────────────
 function decelDropAt(t: number, x: number, decels: Decel[]) {
@@ -246,7 +242,7 @@ function artifactNoise(t: number, x: number, duration: number, level: number, ex
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, cycling, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
+  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -345,8 +341,7 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
       continue
     }
     const sv   = getSegmentValues(segments, t)
-    const cf   = cycling ? cyclingFactor(t) : 1
-    const v    = variabilityAt(x * 0.5, sv.varAmp * cf, sv.stv)
+    const v    = variabilityAt(x * 0.5, sv.varAmp, sv.stv)
     const drop = decelDropAt(t, x, decels)
     const rise = accelRiseAt(t, x, accels)
     let fhr = drop > 15
@@ -531,7 +526,6 @@ let nextId = 1
 export default function App() {
   const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 12, stv: 0.35 }])
   const [activeSegId,   setActiveSegId]   = useState(0)
-  const [cycling,       setCycling]       = useState(true)
   const [accels,        setAccels]        = useState<Accel[]>([])
   const [duration,      setDuration]      = useState(20)
   const [decels,        setDecels]        = useState<Decel[]>([])
@@ -547,11 +541,11 @@ export default function App() {
   useEffect(() => {
     if (!canvasRef.current) return
     drawCTG(canvasRef.current, {
-      segments, cycling, accels, duration, decels, contractions,
+      segments, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
       artifactLevel, artifactExpulsive, paper
     })
-  }, [segments, cycling, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
+  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -591,7 +585,7 @@ export default function App() {
   }
 
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify({ segments, cycling, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ segments, accels, duration, decels, contractions, artifact: { level: artifactLevel, expulsive: artifactExpulsive } }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
@@ -642,7 +636,6 @@ export default function App() {
           <div className="flex-1 px-3.5 py-3">
             <SectionTitle>Duración del trazado</SectionTitle>
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
-            <Toggle label="Cycling fetal"  value={cycling} onChange={setCycling} />
             <Toggle label="Papel real (impresión)" value={paper} onChange={setPaper} />
 
             <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
