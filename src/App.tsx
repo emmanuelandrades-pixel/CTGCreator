@@ -746,7 +746,7 @@ function SplashScreen({ visible }: { visible: boolean }) {
         CTG <span style={{ color: '#22d3ee' }}>Creator</span>
       </div>
       <div className="splash-credit" style={{ marginTop: 6, fontSize: 10.5, color: 'rgba(148,163,184,0.75)', textAlign: 'center' }}>
-        Herramienta educativa de simulación CTG · Emmanuel Andrades, Universidad de Talca
+        Herramienta educativa de simulación CTG · Desarrollado por Emmanuel Andrades, Universidad de Talca
       </div>
     </div>
   )
@@ -1187,7 +1187,7 @@ export default function App() {
         {/* Bottom bar */}
         <div className="px-5 py-1.5 border-t flex items-center" style={{ background: U.panelBg, borderColor: U.border }}>
           <span className="text-[9px]" style={{ color: U.textFaint }}>■ FCF  ·  ■ TOCO  ·  Escala 1 cm/min  ·  ▲ = marcador de segmento</span>
-          <span className="ml-auto text-[9px]" style={{ color: U.textFaint }}>Herramienta educativa de simulación CTG · Emmanuel Andrades, Universidad de Talca</span>
+          <span className="ml-auto text-[9px]" style={{ color: U.textFaint }}>Herramienta educativa de simulación CTG · Desarrollado por Emmanuel Andrades, Universidad de Talca</span>
         </div>
       </div>
     </div>
