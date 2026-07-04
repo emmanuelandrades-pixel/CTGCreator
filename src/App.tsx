@@ -730,7 +730,8 @@ function SplashScreen({ visible }: { visible: boolean }) {
         .splash-logo       { animation: splashPop 0.6s cubic-bezier(.2,.9,.3,1.3) both, splashGlow 2.2s ease-in-out 0.6s infinite; }
         .splash-trace-cyan  { stroke-dasharray: 1; stroke-dashoffset: 1; animation: splashDraw 1.1s 0.35s cubic-bezier(.4,0,.2,1) forwards; }
         .splash-trace-amber { stroke-dasharray: 1; stroke-dashoffset: 1; animation: splashDraw 1.1s 0.55s cubic-bezier(.4,0,.2,1) forwards; }
-        .splash-word        { opacity: 0; animation: splashFadeUp 0.5s 0.9s ease-out forwards; }
+        .splash-word    { opacity: 0; animation: splashFadeUp 0.5s 0.9s ease-out forwards; }
+        .splash-credit  { opacity: 0; animation: splashFadeUp 0.5s 1.2s ease-out forwards; }
       `}</style>
       <img src="/logo-icon.png" alt="CTG Creator" width={120} height={120} className="splash-logo" />
       <svg viewBox="0 0 400 60" width={260} height={40} style={{ marginTop: 18 }}>
@@ -743,6 +744,9 @@ function SplashScreen({ visible }: { visible: boolean }) {
       </svg>
       <div className="splash-word" style={{ marginTop: 14, fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>
         CTG <span style={{ color: '#22d3ee' }}>Creator</span>
+      </div>
+      <div className="splash-credit" style={{ marginTop: 6, fontSize: 10.5, color: 'rgba(148,163,184,0.75)', textAlign: 'center' }}>
+        Herramienta educativa de simulación CTG · Emmanuel Andrades, Universidad de Talca
       </div>
     </div>
   )
@@ -1183,7 +1187,7 @@ export default function App() {
         {/* Bottom bar */}
         <div className="px-5 py-1.5 border-t flex items-center" style={{ background: U.panelBg, borderColor: U.border }}>
           <span className="text-[9px]" style={{ color: U.textFaint }}>■ FCF  ·  ■ TOCO  ·  Escala 1 cm/min  ·  ▲ = marcador de segmento</span>
-          <span className="ml-auto text-[9px]" style={{ color: U.textFaint }}>CTG Creator — FetalPhysio Tools</span>
+          <span className="ml-auto text-[9px]" style={{ color: U.textFaint }}>Herramienta educativa de simulación CTG · Emmanuel Andrades, Universidad de Talca</span>
         </div>
       </div>
     </div>
