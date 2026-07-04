@@ -705,6 +705,49 @@ function YAxis({ paper }: { paper: boolean }) {
   )
 }
 
+// ── Splash screen ─────────────────────────────────────────
+// Portada animada al cargar: la esfera del logo entra con un pulso de
+// brillo y, debajo, un trazado CTG (FCF cian + TOCO ámbar) se "dibuja"
+// solo (stroke-dasharray con pathLength=1, cross-browser sin medir el
+// path real). Se desvanece a los ~1.7s dejando ver el editor.
+function SplashScreen({ visible }: { visible: boolean }) {
+  // Estilos de layout inline (no clases Tailwind): este overlay debe cubrir
+  // la pantalla siempre, incluso si el CDN de Tailwind tarda en cargar o falla.
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 50,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        background: '#0B1120', opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
+        transition: 'opacity 500ms ease',
+      }}
+    >
+      <style>{`
+        @keyframes splashPop  { 0% { transform: scale(0.75); opacity: 0 } 60% { transform: scale(1.06); opacity: 1 } 100% { transform: scale(1); opacity: 1 } }
+        @keyframes splashGlow { 0%,100% { filter: drop-shadow(0 0 6px rgba(34,211,238,0.35)) } 50% { filter: drop-shadow(0 0 22px rgba(34,211,238,0.65)) } }
+        @keyframes splashDraw { to { stroke-dashoffset: 0 } }
+        @keyframes splashFadeUp { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+        .splash-logo       { animation: splashPop 0.6s cubic-bezier(.2,.9,.3,1.3) both, splashGlow 2.2s ease-in-out 0.6s infinite; }
+        .splash-trace-cyan  { stroke-dasharray: 1; stroke-dashoffset: 1; animation: splashDraw 1.1s 0.35s cubic-bezier(.4,0,.2,1) forwards; }
+        .splash-trace-amber { stroke-dasharray: 1; stroke-dashoffset: 1; animation: splashDraw 1.1s 0.55s cubic-bezier(.4,0,.2,1) forwards; }
+        .splash-word        { opacity: 0; animation: splashFadeUp 0.5s 0.9s ease-out forwards; }
+      `}</style>
+      <img src="/logo-icon.png" alt="CTG Creator" width={120} height={120} className="splash-logo" />
+      <svg viewBox="0 0 400 60" width={260} height={40} style={{ marginTop: 18 }}>
+        <path d="M0,30 L60,30 L75,8 L90,52 L105,30 L160,30 L178,14 L192,46 L206,30 L400,30"
+          fill="none" stroke="#22d3ee" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"
+          pathLength={1} className="splash-trace-cyan" />
+        <path d="M0,52 L120,52 Q170,20 220,20 Q270,20 320,52 L400,52"
+          fill="none" stroke="#f59e0b" strokeWidth={3} strokeLinecap="round"
+          pathLength={1} className="splash-trace-amber" />
+      </svg>
+      <div className="splash-word" style={{ marginTop: 14, fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>
+        CTG <span style={{ color: '#22d3ee' }}>Creator</span>
+      </div>
+    </div>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────
 let nextId = 1
 let nextTocoId = 1
@@ -723,6 +766,14 @@ export default function App() {
   const [paper,         setPaper]         = useState(true)
   const [darkUI,        setDarkUI]        = useState(false)
   const [sidebarTab,    setSidebarTab]    = useState<'trazado' | 'accels' | 'decels' | 'contracciones'>('trazado')
+  const [showSplash,     setShowSplash]     = useState(true)
+  const [splashVisible,  setSplashVisible]  = useState(true)
+
+  useEffect(() => {
+    const fade    = setTimeout(() => setSplashVisible(false), 1700)
+    const unmount = setTimeout(() => setShowSplash(false), 2200)
+    return () => { clearTimeout(fade); clearTimeout(unmount) }
+  }, [])
 
   const U = darkUI ? uiThemeDark : uiThemeLight
 
@@ -827,6 +878,7 @@ export default function App() {
 
   return (
     <UICtx.Provider value={U}>
+    {showSplash && <SplashScreen visible={splashVisible} />}
     <div className="flex h-screen overflow-hidden" style={{ background: U.appBg }}>
 
       {/* ── SIDEBAR ── */}
