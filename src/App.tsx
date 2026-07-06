@@ -296,7 +296,7 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
       const plateauStart = startT + onsetRamp
       const plateauEnd = endT - recovRamp
       const plateau = Math.max(0.01, plateauEnd - plateauStart)
-      const bounceLevel = 0.68 // fracción de la profundidad en el rebote parcial (más alto = rebote más sutil)
+      const bounceLevel = 0.5 // fracción de la profundidad en el rebote parcial (más alto = rebote más sutil)
       const t_n1     = plateauStart + plateau * 0.26
       const riseDur  = Math.min(plateau * 0.10, 5 / 60)
       const t_bpeak  = t_n1 + riseDur
@@ -686,8 +686,8 @@ function DecelCard({ decel, index, onChange, onRemove }: {
           className="w-full text-xs rounded-md px-2 py-1.5 outline-none border"
           style={{ background: U.selectBg, borderColor: U.inputBorder, color: U.inputText }}
         >
-          <option value="variable">Variable simple (barorreceptora)</option>
-          <option value="variableComplicated">Variable complicada (nadir bifásico)</option>
+          <option value="variable">Barorreceptora simple</option>
+          <option value="variableComplicated">Barorreceptora complicada (nadir bifásico)</option>
           <option value="late">Tardía (quimiorreceptora)</option>
           <option value="early">Precoz (espejo)</option>
           <option value="prolonged">Prolongada (&gt; 2 min)</option>
