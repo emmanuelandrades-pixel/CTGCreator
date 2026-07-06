@@ -70,7 +70,8 @@ interface Decel {
   time: number
   depth: number
   duration: number
-  onset?: number // solo 'variable': tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
+  onset?: number    // solo 'variable': tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
+  recovery?: number // solo 'variable': tiempo de recuperación (nadir→basal) en segundos, sin límite de "abrupta"
 }
 interface Accel {
   time: number      // minuto de inicio
@@ -257,7 +258,7 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
       // el value-noise del motor de variabilidad para esa textura "sucia"), y
       // un pequeño rebote (overshoot) sobre la basal justo al recuperar.
       const onsetRamp = Math.min(d.onset ?? 8, 29) / 60
-      const recovRamp = 6 / 60
+      const recovRamp = Math.min(d.recovery ?? 12, 45) / 60
       const overshootW = 14 / 60
       if (t >= startT && t < startT + onsetRamp) {
         const p = (t - startT) / onsetRamp
@@ -271,7 +272,13 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         const fine   = hash(x * 1.1 + seed) * 0.08
         contrib = depth * (1 + coarse + fine)
       } else if (t >= endT - recovRamp && t < endT) {
-        contrib = smoothstep(0, 1, (endT - t) / recovRamp) * depth
+        // la recuperación no tiene el límite de "abrupta" del onset (<30s) — en
+        // la literatura suele ser más lenta e irregular que la caída, e incluso
+        // puede superar los 30s sin dejar de ser una variable "simple".
+        const p = (endT - t) / recovRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        const jitter = valueNoise(x * 0.7 + seed * 11) * depth * 0.14 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
       } else if (t >= endT && t < endT + overshootW) {
         const p = (t - endT) / overshootW
         contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
@@ -633,7 +640,7 @@ function DecelCard({ decel, index, onChange, onRemove }: {
           className="w-full text-xs rounded-md px-2 py-1.5 outline-none border"
           style={{ background: U.selectBg, borderColor: U.inputBorder, color: U.inputText }}
         >
-          <option value="variable">Variable (barorreceptora)</option>
+          <option value="variable">Variable simple (barorreceptora)</option>
           <option value="late">Tardía (quimiorreceptora)</option>
           <option value="early">Precoz (espejo)</option>
           <option value="prolonged">Prolongada (&gt; 2 min)</option>
@@ -651,6 +658,12 @@ function DecelCard({ decel, index, onChange, onRemove }: {
             min={2} max={29} step={1} unit="s" color={U.accent}
             note="abrupta: <30s"
             onChange={v => onChange({ ...decel, onset: v })}
+          />
+          <Slider
+            label="Tiempo de recuperación (nadir→basal)" value={decel.recovery ?? 12}
+            min={3} max={45} step={1} unit="s" color={U.accent}
+            note={(decel.recovery ?? 12) > 30 ? 'sin límite (>30s ok)' : undefined}
+            onChange={v => onChange({ ...decel, recovery: v })}
           />
         </div>
       )}
@@ -1072,7 +1085,7 @@ export default function App() {
               />
             ))}
             <button
-              onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45, onset: 8 }])}
+              onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45, onset: 8, recovery: 12 }])}
               className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-cyan-500 hover:text-cyan-500 transition-colors mt-1"
               style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar desaceleración</button>
