@@ -70,6 +70,7 @@ interface Decel {
   time: number
   depth: number
   duration: number
+  onset?: number // solo 'variable': tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
 }
 interface Accel {
   time: number      // minuto de inicio
@@ -255,11 +256,16 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
       // pareja, sino saltos bruscos de ~20-30% de la profundidad — reutiliza
       // el value-noise del motor de variabilidad para esa textura "sucia"), y
       // un pequeño rebote (overshoot) sobre la basal justo al recuperar.
-      const onsetRamp = 3 / 60
+      const onsetRamp = Math.min(d.onset ?? 8, 29) / 60
       const recovRamp = 6 / 60
       const overshootW = 14 / 60
       if (t >= startT && t < startT + onsetRamp) {
-        contrib = smoothstep(0, 1, (t - startT) / onsetRamp) * depth
+        const p = (t - startT) / onsetRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        // irregularidad en la caída: envolvente sin(pi*p) para que sea 0 en los
+        // extremos (sin discontinuidad) y máxima a mitad de camino
+        const jitter = valueNoise(x * 0.9 + seed * 7) * depth * 0.12 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
       } else if (t >= startT + onsetRamp && t < endT - recovRamp) {
         const coarse = valueNoise(x * 0.6 + seed * 3) * 0.26
         const fine   = hash(x * 1.1 + seed) * 0.08
@@ -638,6 +644,16 @@ function DecelCard({ decel, index, onChange, onRemove }: {
         <NumberInput label="Profund. (lpm)"  value={decel.depth}    min={10}  max={90}  step={5}   onChange={v => onChange({ ...decel, depth: v })} />
         <NumberInput label="Duración (seg)"  value={decel.duration} min={15}  max={300} step={5}   onChange={v => onChange({ ...decel, duration: v })} />
       </div>
+      {decel.type === 'variable' && (
+        <div className="mt-2">
+          <Slider
+            label="Tiempo de caída (onset→nadir)" value={decel.onset ?? 8}
+            min={2} max={29} step={1} unit="s" color={U.accent}
+            note="abrupta: <30s"
+            onChange={v => onChange({ ...decel, onset: v })}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -1056,7 +1072,7 @@ export default function App() {
               />
             ))}
             <button
-              onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45 }])}
+              onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45, onset: 8 }])}
               className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-cyan-500 hover:text-cyan-500 transition-colors mt-1"
               style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar desaceleración</button>
