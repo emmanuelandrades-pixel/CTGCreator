@@ -66,7 +66,7 @@ interface Segment {
   stv: number      // textura / STV a corto plazo: 0 = liso (sinusoidal) … 1 = dentado (saltatorio)
 }
 interface Decel {
-  type: 'variable' | 'variableComplicated' | 'late' | 'early' | 'prolonged'
+  type: 'variable' | 'variableComplicated' | 'variableShoulders' | 'late' | 'early' | 'prolonged'
   time: number
   depth: number
   duration: number
@@ -320,6 +320,39 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         const coarse = valueNoise(x * 0.6 + seed * 3) * 0.22
         const fine   = hash(x * 1.1 + seed) * 0.07
         contrib = Math.max(0, depth * levelFrac * (1 + coarse + fine))
+      } else if (t >= endT - recovRamp && t < endT) {
+        const p = (endT - t) / recovRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        const jitter = valueNoise(x * 0.7 + seed * 11) * depth * 0.14 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
+      } else if (t >= endT && t < endT + overshootW) {
+        const p = (t - endT) / overshootW
+        contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
+      }
+
+    } else if (d.type === 'variableShoulders') {
+      // Barorreceptora con hombros: aceleración breve ANTES de la caída
+      // (calibrado contra 1024, ambas ventanas: pico +15-18 lpm justo cuando
+      // la UC empieza a subir, cayendo abruptamente después). El resto de la
+      // forma (onset/nadir/recuperación) es igual a la simple.
+      const onsetRamp = Math.min(d.onset ?? 8, 29) / 60
+      const recovRamp = Math.min(d.recovery ?? 12, 45) / 60
+      const overshootW = 14 / 60
+      const preW = 14 / 60
+      const shoulderAmp = Math.min(16, depth * 0.22)
+
+      if (t >= startT - preW && t < startT) {
+        const p = (t - (startT - preW)) / preW
+        contrib = -shoulderAmp * Math.sin(Math.PI * p)
+      } else if (t >= startT && t < startT + onsetRamp) {
+        const p = (t - startT) / onsetRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        const jitter = valueNoise(x * 0.9 + seed * 7) * depth * 0.12 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
+      } else if (t >= startT + onsetRamp && t < endT - recovRamp) {
+        const coarse = valueNoise(x * 0.6 + seed * 3) * 0.26
+        const fine   = hash(x * 1.1 + seed) * 0.08
+        contrib = depth * (1 + coarse + fine)
       } else if (t >= endT - recovRamp && t < endT) {
         const p = (endT - t) / recovRamp
         const smooth = smoothstep(0, 1, p) * depth
@@ -668,15 +701,23 @@ function SectionTitle({ children, color }: { children: React.ReactNode; color?: 
 }
 
 // ── DecelCard ─────────────────────────────────────────────
-function DecelCard({ decel, index, onChange, onRemove }: {
-  decel: Decel; index: number; onChange: (d: Decel) => void; onRemove: () => void
+function DecelCard({ decel, index, onChange, onRemove, onDuplicate }: {
+  decel: Decel; index: number; onChange: (d: Decel) => void; onRemove: () => void; onDuplicate: () => void
 }) {
   const U = useUI()
   return (
     <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold" style={{ color: U.accent }}>Desacel. #{index + 1}</span>
-        <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onDuplicate}
+            title="Duplicar desaceleración"
+            className="hover:text-cyan-500 text-xs leading-none transition-colors"
+            style={{ color: U.textFaint }}
+          >⧉</button>
+          <button onClick={onRemove} className="hover:text-red-400 text-base leading-none transition-colors" style={{ color: U.textFaint }}>×</button>
+        </div>
       </div>
       <div className="mb-2">
         <label className="text-[10px] block mb-1" style={{ color: U.textFaint }}>Tipo</label>
@@ -688,6 +729,7 @@ function DecelCard({ decel, index, onChange, onRemove }: {
         >
           <option value="variable">Barorreceptora simple</option>
           <option value="variableComplicated">Barorreceptora complicada (nadir bifásico)</option>
+          <option value="variableShoulders">Barorreceptora con hombros</option>
           <option value="late">Tardía (quimiorreceptora)</option>
           <option value="early">Precoz (espejo)</option>
           <option value="prolonged">Prolongada (&gt; 2 min)</option>
@@ -698,7 +740,7 @@ function DecelCard({ decel, index, onChange, onRemove }: {
         <NumberInput label="Profund. (lpm)"  value={decel.depth}    min={10}  max={90}  step={5}   onChange={v => onChange({ ...decel, depth: v })} />
         <NumberInput label="Duración (seg)"  value={decel.duration} min={15}  max={300} step={5}   onChange={v => onChange({ ...decel, duration: v })} />
       </div>
-      {(decel.type === 'variable' || decel.type === 'variableComplicated') && (() => {
+      {(decel.type === 'variable' || decel.type === 'variableComplicated' || decel.type === 'variableShoulders') && (() => {
         const defOnset = decel.type === 'variableComplicated' ? 10 : 8
         const defRecov = decel.type === 'variableComplicated' ? 25 : 12
         return (
@@ -1133,10 +1175,25 @@ export default function App() {
                 key={i} decel={d} index={i}
                 onChange={v => setDecels(prev => prev.map((x, j) => j === i ? v : x))}
                 onRemove={() => setDecels(prev => prev.filter((_, j) => j !== i))}
+                onDuplicate={() => setDecels(prev => {
+                  const dupTime = parseFloat(Math.min(d.time + d.duration / 60 + 2, duration - 0.5).toFixed(1))
+                  const dup: Decel = { ...d, time: dupTime }
+                  return [...prev.slice(0, i + 1), dup, ...prev.slice(i + 1)]
+                })}
               />
             ))}
             <button
-              onClick={() => setDecels(d => [...d, { type: 'variable', time: parseFloat((duration * 0.3).toFixed(1)), depth: 35, duration: 45, onset: 8, recovery: 12 }])}
+              onClick={() => setDecels(d => {
+                let nextTime: number
+                if (d.length === 0) {
+                  nextTime = 1
+                } else {
+                  const last = d[d.length - 1]
+                  nextTime = last.time + last.duration / 60 + 2
+                }
+                nextTime = Math.min(parseFloat(nextTime.toFixed(1)), duration - 0.5)
+                return [...d, { type: 'variable', time: nextTime, depth: 35, duration: 45, onset: 8, recovery: 12 }]
+              })}
               className="w-full py-2 rounded-lg border border-dashed text-xs hover:border-cyan-500 hover:text-cyan-500 transition-colors mt-1"
               style={{ borderColor: U.dashed, color: U.textMuted }}
             >+ Agregar desaceleración</button>
