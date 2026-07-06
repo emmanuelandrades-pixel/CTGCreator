@@ -246,35 +246,52 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
     const durMin = d.duration / 60
     const startT = d.time
     const endT   = startT + durMin
+    let contrib = 0
 
     if (d.type === 'variable') {
-      const ramp = 5 / 60
-      if (t >= startT && t < startT + ramp)
-        drop = Math.max(drop, smoothstep(0, 1, (t - startT) / ramp) * depth)
-      else if (t >= startT + ramp && t < endT - ramp)
-        drop = Math.max(drop, depth + hash(x * 0.4 + seed) * depth * 0.07)
-      else if (t >= endT - ramp && t < endT)
-        drop = Math.max(drop, smoothstep(0, 1, (endT - t) / ramp) * depth)
+      // Calibrado contra variables "simples" reales (CTU-CHB, ej. caso 1020):
+      // onset más abrupto que la recuperación (barorreceptor: oclusión rápida,
+      // reapertura algo más lenta), nadir irregular (no una ondulación fina y
+      // pareja, sino saltos bruscos de ~20-30% de la profundidad — reutiliza
+      // el value-noise del motor de variabilidad para esa textura "sucia"), y
+      // un pequeño rebote (overshoot) sobre la basal justo al recuperar.
+      const onsetRamp = 3 / 60
+      const recovRamp = 6 / 60
+      const overshootW = 14 / 60
+      if (t >= startT && t < startT + onsetRamp) {
+        contrib = smoothstep(0, 1, (t - startT) / onsetRamp) * depth
+      } else if (t >= startT + onsetRamp && t < endT - recovRamp) {
+        const coarse = valueNoise(x * 0.6 + seed * 3) * 0.26
+        const fine   = hash(x * 1.1 + seed) * 0.08
+        contrib = depth * (1 + coarse + fine)
+      } else if (t >= endT - recovRamp && t < endT) {
+        contrib = smoothstep(0, 1, (endT - t) / recovRamp) * depth
+      } else if (t >= endT && t < endT + overshootW) {
+        const p = (t - endT) / overshootW
+        contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
+      }
 
     } else if (d.type === 'late') {
       const lag = 30 / 60
       const s = startT + lag, e = endT + lag, mid = s + (e - s) / 2
-      if (t >= s && t < mid)  drop = Math.max(drop, smoothstep(0, 1, (t - s) / (mid - s)) * depth)
-      else if (t >= mid && t <= e) drop = Math.max(drop, smoothstep(0, 1, (e - t) / (e - mid)) * depth)
+      if (t >= s && t < mid)  contrib = smoothstep(0, 1, (t - s) / (mid - s)) * depth
+      else if (t >= mid && t <= e) contrib = smoothstep(0, 1, (e - t) / (e - mid)) * depth
 
     } else if (d.type === 'early') {
       if (t >= startT && t <= endT)
-        drop = Math.max(drop, Math.sin(((t - startT) / durMin) * Math.PI) * depth)
+        contrib = Math.sin(((t - startT) / durMin) * Math.PI) * depth
 
     } else if (d.type === 'prolonged') {
       const ramp = 0.25
       if (t >= startT && t < startT + ramp)
-        drop = Math.max(drop, smoothstep(0, 1, (t - startT) / ramp) * depth)
+        contrib = smoothstep(0, 1, (t - startT) / ramp) * depth
       else if (t >= startT + ramp && t < endT - ramp)
-        drop = Math.max(drop, depth + hash(x * 0.2 + seed) * depth * 0.05)
+        contrib = depth + hash(x * 0.2 + seed) * depth * 0.05
       else if (t >= endT - ramp && t <= endT)
-        drop = Math.max(drop, smoothstep(0, 1, (endT - t) / ramp) * depth)
+        contrib = smoothstep(0, 1, (endT - t) / ramp) * depth
     }
+
+    if (Math.abs(contrib) > Math.abs(drop)) drop = contrib
   })
   return drop
 }
