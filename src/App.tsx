@@ -66,7 +66,7 @@ interface Segment {
   stv: number      // textura / STV a corto plazo: 0 = liso (sinusoidal) … 1 = dentado (saltatorio)
 }
 interface Decel {
-  type: 'variable' | 'late' | 'early' | 'prolonged'
+  type: 'variable' | 'variableComplicated' | 'late' | 'early' | 'prolonged'
   time: number
   depth: number
   duration: number
@@ -275,6 +275,52 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         // la recuperación no tiene el límite de "abrupta" del onset (<30s) — en
         // la literatura suele ser más lenta e irregular que la caída, e incluso
         // puede superar los 30s sin dejar de ser una variable "simple".
+        const p = (endT - t) / recovRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        const jitter = valueNoise(x * 0.7 + seed * 11) * depth * 0.14 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
+      } else if (t >= endT && t < endT + overshootW) {
+        const p = (t - endT) / overshootW
+        contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
+      }
+
+    } else if (d.type === 'variableComplicated') {
+      // Variable complicada: nadir bifásico (cae, rebote parcial, cae de nuevo)
+      // + recuperación lenta, calibrado contra 1016 Ep.B (min 56.6-58.1) y 1024
+      // Ventana 2 (min 61-62.7). Mismo onset abrupto que la simple, pero el
+      // "plateau" tiene dos valles con un rebote parcial (no completo) entre
+      // ellos, y por defecto una recuperación más lenta.
+      const onsetRamp = Math.min(d.onset ?? 10, 29) / 60
+      const recovRamp = Math.min(d.recovery ?? 25, 45) / 60
+      const overshootW = 14 / 60
+      const plateauStart = startT + onsetRamp
+      const plateauEnd = endT - recovRamp
+      const plateau = Math.max(0.01, plateauEnd - plateauStart)
+      const bounceLevel = 0.4 // fracción de la profundidad en el rebote parcial
+      const t_n1     = plateauStart + plateau * 0.22
+      const riseDur  = Math.min(plateau * 0.18, 10 / 60)
+      const t_bpeak  = t_n1 + riseDur
+      const holdDur  = Math.min(plateau * 0.10, 6 / 60)
+      const t_bhold  = t_bpeak + holdDur
+      const fallDur  = Math.min(plateau * 0.12, 6 / 60)
+      const t_n2s    = t_bhold + fallDur
+
+      if (t >= startT && t < startT + onsetRamp) {
+        const p = (t - startT) / onsetRamp
+        const smooth = smoothstep(0, 1, p) * depth
+        const jitter = valueNoise(x * 0.9 + seed * 7) * depth * 0.12 * Math.sin(Math.PI * p)
+        contrib = Math.max(0, smooth + jitter)
+      } else if (t >= startT + onsetRamp && t < endT - recovRamp) {
+        let levelFrac: number
+        if (t < t_n1) levelFrac = 1
+        else if (t < t_bpeak) levelFrac = lerp(1, bounceLevel, smoothstep(t_n1, t_bpeak, t))
+        else if (t < t_bhold) levelFrac = bounceLevel
+        else if (t < t_n2s)   levelFrac = lerp(bounceLevel, 1, smoothstep(t_bhold, t_n2s, t))
+        else levelFrac = 1
+        const coarse = valueNoise(x * 0.6 + seed * 3) * 0.22
+        const fine   = hash(x * 1.1 + seed) * 0.07
+        contrib = Math.max(0, depth * levelFrac * (1 + coarse + fine))
+      } else if (t >= endT - recovRamp && t < endT) {
         const p = (endT - t) / recovRamp
         const smooth = smoothstep(0, 1, p) * depth
         const jitter = valueNoise(x * 0.7 + seed * 11) * depth * 0.14 * Math.sin(Math.PI * p)
@@ -641,6 +687,7 @@ function DecelCard({ decel, index, onChange, onRemove }: {
           style={{ background: U.selectBg, borderColor: U.inputBorder, color: U.inputText }}
         >
           <option value="variable">Variable simple (barorreceptora)</option>
+          <option value="variableComplicated">Variable complicada (nadir bifásico)</option>
           <option value="late">Tardía (quimiorreceptora)</option>
           <option value="early">Precoz (espejo)</option>
           <option value="prolonged">Prolongada (&gt; 2 min)</option>
@@ -651,22 +698,26 @@ function DecelCard({ decel, index, onChange, onRemove }: {
         <NumberInput label="Profund. (lpm)"  value={decel.depth}    min={10}  max={90}  step={5}   onChange={v => onChange({ ...decel, depth: v })} />
         <NumberInput label="Duración (seg)"  value={decel.duration} min={15}  max={300} step={5}   onChange={v => onChange({ ...decel, duration: v })} />
       </div>
-      {decel.type === 'variable' && (
-        <div className="mt-2">
-          <Slider
-            label="Tiempo de caída (onset→nadir)" value={decel.onset ?? 8}
-            min={2} max={29} step={1} unit="s" color={U.accent}
-            note="abrupta: <30s"
-            onChange={v => onChange({ ...decel, onset: v })}
-          />
-          <Slider
-            label="Tiempo de recuperación (nadir→basal)" value={decel.recovery ?? 12}
-            min={3} max={45} step={1} unit="s" color={U.accent}
-            note={(decel.recovery ?? 12) > 30 ? 'sin límite (>30s ok)' : undefined}
-            onChange={v => onChange({ ...decel, recovery: v })}
-          />
-        </div>
-      )}
+      {(decel.type === 'variable' || decel.type === 'variableComplicated') && (() => {
+        const defOnset = decel.type === 'variableComplicated' ? 10 : 8
+        const defRecov = decel.type === 'variableComplicated' ? 25 : 12
+        return (
+          <div className="mt-2">
+            <Slider
+              label="Tiempo de caída (onset→nadir)" value={decel.onset ?? defOnset}
+              min={2} max={29} step={1} unit="s" color={U.accent}
+              note="abrupta: <30s"
+              onChange={v => onChange({ ...decel, onset: v })}
+            />
+            <Slider
+              label="Tiempo de recuperación (nadir→basal)" value={decel.recovery ?? defRecov}
+              min={3} max={45} step={1} unit="s" color={U.accent}
+              note={(decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
+              onChange={v => onChange({ ...decel, recovery: v })}
+            />
+          </div>
+        )
+      })()}
     </div>
   )
 }
