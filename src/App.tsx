@@ -296,13 +296,13 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
       const plateauStart = startT + onsetRamp
       const plateauEnd = endT - recovRamp
       const plateau = Math.max(0.01, plateauEnd - plateauStart)
-      const bounceLevel = 0.4 // fracción de la profundidad en el rebote parcial
-      const t_n1     = plateauStart + plateau * 0.22
-      const riseDur  = Math.min(plateau * 0.18, 10 / 60)
+      const bounceLevel = 0.68 // fracción de la profundidad en el rebote parcial (más alto = rebote más sutil)
+      const t_n1     = plateauStart + plateau * 0.26
+      const riseDur  = Math.min(plateau * 0.10, 5 / 60)
       const t_bpeak  = t_n1 + riseDur
-      const holdDur  = Math.min(plateau * 0.10, 6 / 60)
+      const holdDur  = Math.min(plateau * 0.05, 2.5 / 60)
       const t_bhold  = t_bpeak + holdDur
-      const fallDur  = Math.min(plateau * 0.12, 6 / 60)
+      const fallDur  = Math.min(plateau * 0.07, 3.5 / 60)
       const t_n2s    = t_bhold + fallDur
 
       if (t >= startT && t < startT + onsetRamp) {
