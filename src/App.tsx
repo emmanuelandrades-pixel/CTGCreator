@@ -72,6 +72,8 @@ interface Decel {
   duration: number
   onset?: number    // solo 'variable': tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
   recovery?: number // solo 'variable': tiempo de recuperación (nadir→basal) en segundos, sin límite de "abrupta"
+  preShoulder?: number  // solo 'variableShoulders': amplitud del hombro previo, en lpm (15-30)
+  postShoulder?: number // solo 'variableShoulders': amplitud del hombro posterior, en lpm (0-30)
 }
 interface Accel {
   time: number      // minuto de inicio
@@ -337,13 +339,14 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
       // forma (onset/nadir/recuperación) es igual a la simple.
       const onsetRamp = Math.min(d.onset ?? 8, 29) / 60
       const recovRamp = Math.min(d.recovery ?? 12, 45) / 60
-      const overshootW = 14 / 60
       const preW = 14 / 60
-      const shoulderAmp = Math.min(16, depth * 0.22)
+      const postW = 16 / 60
+      const preAmp  = d.preShoulder ?? 16
+      const postAmp = d.postShoulder ?? 0
 
       if (t >= startT - preW && t < startT) {
         const p = (t - (startT - preW)) / preW
-        contrib = -shoulderAmp * Math.sin(Math.PI * p)
+        contrib = -preAmp * Math.sin(Math.PI * p)
       } else if (t >= startT && t < startT + onsetRamp) {
         const p = (t - startT) / onsetRamp
         const smooth = smoothstep(0, 1, p) * depth
@@ -358,9 +361,9 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         const smooth = smoothstep(0, 1, p) * depth
         const jitter = valueNoise(x * 0.7 + seed * 11) * depth * 0.14 * Math.sin(Math.PI * p)
         contrib = Math.max(0, smooth + jitter)
-      } else if (t >= endT && t < endT + overshootW) {
-        const p = (t - endT) / overshootW
-        contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
+      } else if (postAmp > 0 && t >= endT && t < endT + postW) {
+        const p = (t - endT) / postW
+        contrib = -postAmp * Math.sin(Math.PI * p)
       }
 
     } else if (d.type === 'late') {
@@ -757,6 +760,21 @@ function DecelCard({ decel, index, onChange, onRemove, onDuplicate }: {
               note={(decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
               onChange={v => onChange({ ...decel, recovery: v })}
             />
+            {decel.type === 'variableShoulders' && (
+              <>
+                <Slider
+                  label="Hombro previo (amplitud)" value={decel.preShoulder ?? 16}
+                  min={15} max={30} step={1} unit="lpm" color={U.accent}
+                  onChange={v => onChange({ ...decel, preShoulder: v })}
+                />
+                <Slider
+                  label="Hombro posterior (amplitud)" value={decel.postShoulder ?? 0}
+                  min={0} max={30} step={1} unit="lpm" color={U.accent}
+                  note={(decel.postShoulder ?? 0) === 0 ? 'ausente' : undefined}
+                  onChange={v => onChange({ ...decel, postShoulder: v })}
+                />
+              </>
+            )}
           </div>
         )
       })()}
