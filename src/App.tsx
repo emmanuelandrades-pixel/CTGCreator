@@ -630,10 +630,14 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
 
 // ── Exportación PNG con tamaño físico real (solo para descarga) ──
 // Papel a 1 cm/min. Banda FCF: 8 cm · banda de escala: 1 cm · banda TOCO: 4 cm.
-// Se renderiza en un canvas aparte a 300 DPI y se incrusta esa resolución
-// en el propio PNG (chunk pHYs), para que "imprimir a tamaño real" respete
-// estas medidas exactas — independiente del tamaño en pantalla.
-const EXPORT_DPI     = 300
+// DPI = 96: la mayoría de navegadores y visores de imagen IGNORAN el
+// metadato de DPI (chunk pHYs) al imprimir y simplemente asumen 96 DPI
+// (el estándar CSS/web) — por eso a 300 DPI la impresión salía ~3x más
+// grande de lo esperado. Generando el PNG directamente a 96 DPI, "imprimir
+// a tamaño real" da las medidas correctas incluso en software que no lee
+// esa metadata. Igual se incrusta el pHYs correspondiente (96 DPI) para
+// el software que sí la respeta (Preview de macOS, editores profesionales).
+const EXPORT_DPI     = 96
 const EXPORT_PX_CM   = EXPORT_DPI / 2.54
 const EXPORT_FHR_CM  = 8
 const EXPORT_MID_CM  = 1
