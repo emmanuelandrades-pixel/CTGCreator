@@ -664,7 +664,6 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
   const marginTop    = Math.round(0.12 * pxCm)
   const marginBottom = Math.round(0.34 * pxCm)
   const axisW = Math.round(1.15 * pxCm)
-  const brandW = Math.round(3.5 * pxCm) // franja derecha de la banda intermedia: logo + crédito
 
   const fhrTop     = marginTop
   const fhrBottom  = fhrTop + fhrH
@@ -675,7 +674,7 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
   const canvasH    = tocoBottom + marginBottom
 
   const contentW = Math.round(duration * pxPerMin)
-  const W = axisW + contentW + brandW
+  const W = axisW + contentW
 
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -759,13 +758,26 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
     ctx.fillText(unit, xr - 4, tocoBottom - 3)
   }
 
+  // Geometría del bloque de marca (logo + crédito), anclado al borde derecho
+  // DENTRO del ancho del trazado (no extiende el canvas), para calcular con
+  // qué "1 cm/min" repetido podría chocar antes de dibujar ninguno de los dos.
+  ctx.font = 'bold 7px system-ui'
+  const brandLine1 = 'Generado con'
+  const brandLine2 = 'CTG Creator'
+  const brandTextW = Math.max(ctx.measureText(brandLine1).width, ctx.measureText(brandLine2).width)
+  const logoSize   = Math.min(midH - 10, 18)
+  const brandGap = 4, brandPad = 6
+  const logoX = gridEndX - brandPad - brandTextW - brandGap - logoSize
+  const brandTextX = logoX + logoSize + brandGap
+  const logoY = midTop + (midH - logoSize) / 2
+
   // Banda intermedia (1 cm): velocidad de registro, "1 cm/min" cada 20 min
   // (fuente ~30% más chica que la primera versión, para que quepa cómoda)
   ctx.textAlign = 'center'
   ctx.font = 'bold 11px system-ui'; ctx.fillStyle = th.timeLabel
   for (let m = 0; m <= duration; m += 20) {
     const xr = axisW + m * pxPerMin + (m === 0 ? pxCm * 0.9 : 0)
-    if (xr > gridEndX - 45) continue // evita chocar con la franja de marca a la derecha
+    if (xr > logoX - 10) continue // evita chocar con el bloque de marca
     ctx.fillText('1 cm/min', xr, midTop + midH * 0.63)
   }
 
@@ -773,18 +785,15 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
   ctx.fillStyle = th.timeLabel; ctx.font = '10px system-ui'; ctx.textAlign = 'center'
   for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", axisW + m * pxPerMin, canvasH - marginBottom * 0.25)
 
-  // Franja de marca (dentro de la banda intermedia, a la derecha): logo + crédito
+  // Logo + crédito, dentro del ancho del trazado
   try {
     const logo = await loadImage('/logo-icon.png')
-    const logoSize = Math.min(midH - 8, 26)
-    const logoX = gridEndX + 8
-    const logoY = midTop + (midH - logoSize) / 2
     ctx.drawImage(logo, logoX, logoY, logoSize, logoSize)
     ctx.textAlign = 'left'; ctx.fillStyle = th.timeLabel
-    ctx.font = 'bold 8px system-ui'
-    ctx.fillText('Generado con', logoX + logoSize + 6, midTop + midH * 0.42)
-    ctx.font = 'bold 8px system-ui'; ctx.fillStyle = th.tocoLabel
-    ctx.fillText('CTG Creator', logoX + logoSize + 6, midTop + midH * 0.72)
+    ctx.font = 'bold 7px system-ui'
+    ctx.fillText(brandLine1, brandTextX, midTop + midH * 0.42)
+    ctx.fillStyle = th.tocoLabel
+    ctx.fillText(brandLine2, brandTextX, midTop + midH * 0.72)
   } catch {
     // si el logo no carga (offline, etc.) se omite sin romper la exportación
   }
