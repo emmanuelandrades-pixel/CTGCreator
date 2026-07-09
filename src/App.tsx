@@ -643,7 +643,16 @@ const EXPORT_FHR_CM  = 8
 const EXPORT_MID_CM  = 1
 const EXPORT_TOCO_CM = 4
 
-function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = src
+  })
+}
+
+async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> {
   const { segments, accels, duration, decels, contractions, artifactLevel, artifactExpulsive, tocoSegments } = config
   const th = theme(true) // siempre estilo papel: pensado para imprimir
 
@@ -655,6 +664,7 @@ function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
   const marginTop    = Math.round(0.12 * pxCm)
   const marginBottom = Math.round(0.34 * pxCm)
   const axisW = Math.round(1.15 * pxCm)
+  const brandW = Math.round(3.5 * pxCm) // franja derecha de la banda intermedia: logo + crédito
 
   const fhrTop     = marginTop
   const fhrBottom  = fhrTop + fhrH
@@ -665,7 +675,7 @@ function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
   const canvasH    = tocoBottom + marginBottom
 
   const contentW = Math.round(duration * pxPerMin)
-  const W = axisW + contentW
+  const W = axisW + contentW + brandW
 
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -678,55 +688,59 @@ function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
   ctx.fillStyle = th.bg
   ctx.fillRect(0, 0, W, canvasH)
 
-  // Grid FCF
+  // Grid FCF (solo dentro del área del trazado, no en la franja de marca)
+  const gridEndX = axisW + contentW
   for (let fhr = FHR_MIN; fhr <= FHR_MAX; fhr += 10) {
     const y = fhrToPxL(fhr)
     const major = fhr % 30 === 0
     ctx.strokeStyle = major ? th.hMajor : th.hMinor
     ctx.lineWidth = major ? 1.2 : 0.7
-    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(W, y); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(gridEndX, y); ctx.stroke()
   }
   // Grid TOCO
   ;[0, 25, 50, 75, 100].forEach(p => {
     ctx.strokeStyle = th.tocoH; ctx.lineWidth = (p === 0 || p === 100) ? 1.0 : 0.7
     const y = tocoToPxL(p)
-    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(W, y); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(gridEndX, y); ctx.stroke()
   })
-  // Verticales: finas cada 0.5 min, oscuras cada 3 min, cruzan las tres bandas
+  // Verticales: finas cada 0.5 min, oscuras cada 3 min — SOLO en las bandas
+  // FCF y TOCO, sin cruzar la banda intermedia (para que sus bordes se vean
+  // limpios y el inicio/fin de cada banda sea identificable)
   for (let half = 0; half <= duration * 2; half++) {
     const x = axisW + (half / 2) * pxPerMin
     const major = half % 6 === 0
     ctx.strokeStyle = major ? th.vMajor : th.vMinor
     ctx.lineWidth = major ? 1.6 : 0.7
-    ctx.beginPath(); ctx.moveTo(x, fhrTop); ctx.lineTo(x, tocoBottom); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(x, fhrTop); ctx.lineTo(x, fhrBottom); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(x, tocoTop); ctx.lineTo(x, tocoBottom); ctx.stroke()
   }
   // Separadores entre bandas
   ctx.strokeStyle = th.tocoSep; ctx.lineWidth = 1.3
   ;[fhrBottom, midBottom].forEach(y => { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() })
 
-  // Escala FCF fija (eje izquierdo)
-  ctx.font = `${Math.round(pxCm * 0.095)}px system-ui`; ctx.textAlign = 'right'; ctx.fillStyle = th.fhrLabelText
+  // Escala FCF fija (eje izquierdo) — agrandada para legibilidad a 96 DPI
+  ctx.font = '11px system-ui'; ctx.textAlign = 'right'; ctx.fillStyle = th.fhrLabelText
   ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => ctx.fillText(String(fhr), axisW - 6, fhrToPxL(fhr) + 4))
   // Escala TOCO fija (eje izquierdo, mmHg)
-  ctx.font = `${Math.round(pxCm * 0.09)}px system-ui`; ctx.fillStyle = th.tocoLabel
+  ctx.font = '10px system-ui'; ctx.fillStyle = th.tocoLabel
   ;[100, 75, 50, 25, 0].forEach(mmhg => ctx.fillText(String(mmhg), axisW - 6, tocoToPxL(mmhg) + 4))
-  ctx.font = `bold ${Math.round(pxCm * 0.08)}px system-ui`
+  ctx.font = 'bold 9px system-ui'
   ctx.fillText('mmHg', axisW - 6, tocoBottom - 4)
 
   // Escala FCF reimpresa cada 10 min
-  ctx.font = `${Math.round(pxCm * 0.085)}px system-ui`; ctx.textAlign = 'right'
+  ctx.font = '10px system-ui'; ctx.textAlign = 'right'
   for (let m = 10; m <= duration; m += 10) {
     const xr = axisW + m * pxPerMin
     ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => {
       const y = fhrToPxL(fhr)
       ctx.fillStyle = th.fhrLabelBox
-      ctx.fillRect(xr - pxCm * 0.28, y - pxCm * 0.065, pxCm * 0.26, pxCm * 0.13)
+      ctx.fillRect(xr - 30, y - 7, 28, 14)
       ctx.fillStyle = th.fhrLabelText
-      ctx.fillText(String(fhr), xr - pxCm * 0.04, y + pxCm * 0.03)
+      ctx.fillText(String(fhr), xr - 4, y + 3.5)
     })
   }
   // Escala TOCO reimpresa cada 5 min, alternando mmHg/kPa
-  ctx.font = `${Math.round(pxCm * 0.08)}px system-ui`; ctx.textAlign = 'right'
+  ctx.font = '9px system-ui'; ctx.textAlign = 'right'
   for (let m = 5; m <= duration; m += 5) {
     const xr = axisW + m * pxPerMin
     const isKpa = (m / 5) % 2 === 1
@@ -735,27 +749,45 @@ function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
     ticks.forEach(v => {
       const y = tocoToPxL(isKpa ? v * 7.5 : v)
       ctx.fillStyle = th.fhrLabelBox
-      ctx.fillRect(xr - pxCm * 0.22, y - pxCm * 0.06, pxCm * 0.2, pxCm * 0.12)
+      ctx.fillRect(xr - 24, y - 6.5, 22, 13)
       ctx.fillStyle = th.tocoLabel
-      ctx.fillText(String(v), xr - pxCm * 0.04, y + pxCm * 0.03)
+      ctx.fillText(String(v), xr - 4, y + 3.5)
     })
     ctx.fillStyle = th.fhrLabelBox
-    ctx.fillRect(xr - pxCm * 0.28, tocoBottom - pxCm * 0.11, pxCm * 0.26, pxCm * 0.1)
+    ctx.fillRect(xr - 30, tocoBottom - 13, 28, 12)
     ctx.fillStyle = th.tocoLabel
-    ctx.fillText(unit, xr - pxCm * 0.04, tocoBottom - pxCm * 0.02)
+    ctx.fillText(unit, xr - 4, tocoBottom - 3)
   }
 
   // Banda intermedia (1 cm): velocidad de registro, "1 cm/min" cada 20 min
+  // (fuente ~30% más chica que la primera versión, para que quepa cómoda)
   ctx.textAlign = 'center'
-  ctx.font = `bold ${Math.round(midH * 0.4)}px system-ui`; ctx.fillStyle = th.timeLabel
+  ctx.font = 'bold 11px system-ui'; ctx.fillStyle = th.timeLabel
   for (let m = 0; m <= duration; m += 20) {
     const xr = axisW + m * pxPerMin + (m === 0 ? pxCm * 0.9 : 0)
+    if (xr > gridEndX - 45) continue // evita chocar con la franja de marca a la derecha
     ctx.fillText('1 cm/min', xr, midTop + midH * 0.63)
   }
 
   // Etiquetas de minuto (debajo de la banda TOCO)
-  ctx.fillStyle = th.timeLabel; ctx.font = `${Math.round(pxCm * 0.09)}px system-ui`; ctx.textAlign = 'center'
+  ctx.fillStyle = th.timeLabel; ctx.font = '10px system-ui'; ctx.textAlign = 'center'
   for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", axisW + m * pxPerMin, canvasH - marginBottom * 0.25)
+
+  // Franja de marca (dentro de la banda intermedia, a la derecha): logo + crédito
+  try {
+    const logo = await loadImage('/logo-icon.png')
+    const logoSize = Math.min(midH - 8, 26)
+    const logoX = gridEndX + 8
+    const logoY = midTop + (midH - logoSize) / 2
+    ctx.drawImage(logo, logoX, logoY, logoSize, logoSize)
+    ctx.textAlign = 'left'; ctx.fillStyle = th.timeLabel
+    ctx.font = 'bold 8px system-ui'
+    ctx.fillText('Generado con', logoX + logoSize + 6, midTop + midH * 0.42)
+    ctx.font = 'bold 8px system-ui'; ctx.fillStyle = th.tocoLabel
+    ctx.fillText('CTG Creator', logoX + logoSize + 6, midTop + midH * 0.72)
+  } catch {
+    // si el logo no carga (offline, etc.) se omite sin romper la exportación
+  }
 
   // TOCO (curva) — xSec mantiene el ruido/artefacto calibrado en "segundos"
   // reales, independiente de la resolución de exportación.
@@ -772,7 +804,7 @@ function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
   ctx.fillStyle = th.tocoFill
   ctx.beginPath()
   tocoPath.forEach((p, i) => { const x = axisW + i, y = tocoToPxL(p.v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
-  ctx.lineTo(W, tocoBottom); ctx.lineTo(axisW, tocoBottom); ctx.closePath(); ctx.fill()
+  ctx.lineTo(gridEndX, tocoBottom); ctx.lineTo(axisW, tocoBottom); ctx.closePath(); ctx.fill()
   ctx.strokeStyle = th.toco; ctx.lineWidth = 1.5
   ctx.beginPath()
   let tocoPenDown = false
@@ -1248,8 +1280,8 @@ export default function App() {
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
-  const exportPNG = () => {
-    const exportCanvas = buildExportCanvas({
+  const exportPNG = async () => {
+    const exportCanvas = await buildExportCanvas({
       segments, accels, duration, decels, contractions,
       activeSegTime: 0, artifactLevel, artifactExpulsive, paper: true,
       tocoSegments, activeTocoSegTime: 0,
