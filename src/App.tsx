@@ -628,6 +628,219 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   ctx.shadowBlur = 0
 }
 
+// ── Exportación PNG con tamaño físico real (solo para descarga) ──
+// Papel a 1 cm/min. Banda FCF: 8 cm · banda de escala: 1 cm · banda TOCO: 4 cm.
+// Se renderiza en un canvas aparte a 300 DPI y se incrusta esa resolución
+// en el propio PNG (chunk pHYs), para que "imprimir a tamaño real" respete
+// estas medidas exactas — independiente del tamaño en pantalla.
+const EXPORT_DPI     = 300
+const EXPORT_PX_CM   = EXPORT_DPI / 2.54
+const EXPORT_FHR_CM  = 8
+const EXPORT_MID_CM  = 1
+const EXPORT_TOCO_CM = 4
+
+function buildExportCanvas(config: CTGConfig): HTMLCanvasElement {
+  const { segments, accels, duration, decels, contractions, artifactLevel, artifactExpulsive, tocoSegments } = config
+  const th = theme(true) // siempre estilo papel: pensado para imprimir
+
+  const pxCm = EXPORT_PX_CM
+  const pxPerMin = pxCm // velocidad real del papel: 1 cm/min
+  const fhrH  = Math.round(EXPORT_FHR_CM  * pxCm)
+  const midH  = Math.round(EXPORT_MID_CM  * pxCm)
+  const tocoH = Math.round(EXPORT_TOCO_CM * pxCm)
+  const marginTop    = Math.round(0.12 * pxCm)
+  const marginBottom = Math.round(0.34 * pxCm)
+  const axisW = Math.round(1.15 * pxCm)
+
+  const fhrTop     = marginTop
+  const fhrBottom  = fhrTop + fhrH
+  const midTop     = fhrBottom
+  const midBottom  = midTop + midH
+  const tocoTop    = midBottom
+  const tocoBottom = tocoTop + tocoH
+  const canvasH    = tocoBottom + marginBottom
+
+  const contentW = Math.round(duration * pxPerMin)
+  const W = axisW + contentW
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = canvasH
+  const ctx = canvas.getContext('2d')!
+
+  const fhrToPxL  = (fhr: number) => fhrTop + (FHR_MAX - fhr) / (FHR_MAX - FHR_MIN) * (fhrBottom - fhrTop)
+  const tocoToPxL = (p: number)   => tocoBottom - (p / 100) * (tocoBottom - tocoTop)
+
+  ctx.fillStyle = th.bg
+  ctx.fillRect(0, 0, W, canvasH)
+
+  // Grid FCF
+  for (let fhr = FHR_MIN; fhr <= FHR_MAX; fhr += 10) {
+    const y = fhrToPxL(fhr)
+    const major = fhr % 30 === 0
+    ctx.strokeStyle = major ? th.hMajor : th.hMinor
+    ctx.lineWidth = major ? 1.2 : 0.7
+    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(W, y); ctx.stroke()
+  }
+  // Grid TOCO
+  ;[0, 25, 50, 75, 100].forEach(p => {
+    ctx.strokeStyle = th.tocoH; ctx.lineWidth = (p === 0 || p === 100) ? 1.0 : 0.7
+    const y = tocoToPxL(p)
+    ctx.beginPath(); ctx.moveTo(axisW, y); ctx.lineTo(W, y); ctx.stroke()
+  })
+  // Verticales: finas cada 0.5 min, oscuras cada 3 min, cruzan las tres bandas
+  for (let half = 0; half <= duration * 2; half++) {
+    const x = axisW + (half / 2) * pxPerMin
+    const major = half % 6 === 0
+    ctx.strokeStyle = major ? th.vMajor : th.vMinor
+    ctx.lineWidth = major ? 1.6 : 0.7
+    ctx.beginPath(); ctx.moveTo(x, fhrTop); ctx.lineTo(x, tocoBottom); ctx.stroke()
+  }
+  // Separadores entre bandas
+  ctx.strokeStyle = th.tocoSep; ctx.lineWidth = 1.3
+  ;[fhrBottom, midBottom].forEach(y => { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke() })
+
+  // Escala FCF fija (eje izquierdo)
+  ctx.font = `${Math.round(pxCm * 0.095)}px system-ui`; ctx.textAlign = 'right'; ctx.fillStyle = th.fhrLabelText
+  ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => ctx.fillText(String(fhr), axisW - 6, fhrToPxL(fhr) + 4))
+  // Escala TOCO fija (eje izquierdo, mmHg)
+  ctx.font = `${Math.round(pxCm * 0.09)}px system-ui`; ctx.fillStyle = th.tocoLabel
+  ;[100, 75, 50, 25, 0].forEach(mmhg => ctx.fillText(String(mmhg), axisW - 6, tocoToPxL(mmhg) + 4))
+  ctx.font = `bold ${Math.round(pxCm * 0.08)}px system-ui`
+  ctx.fillText('mmHg', axisW - 6, tocoBottom - 4)
+
+  // Escala FCF reimpresa cada 10 min
+  ctx.font = `${Math.round(pxCm * 0.085)}px system-ui`; ctx.textAlign = 'right'
+  for (let m = 10; m <= duration; m += 10) {
+    const xr = axisW + m * pxPerMin
+    ;[240, 210, 180, 150, 120, 90, 60, 30].forEach(fhr => {
+      const y = fhrToPxL(fhr)
+      ctx.fillStyle = th.fhrLabelBox
+      ctx.fillRect(xr - pxCm * 0.28, y - pxCm * 0.065, pxCm * 0.26, pxCm * 0.13)
+      ctx.fillStyle = th.fhrLabelText
+      ctx.fillText(String(fhr), xr - pxCm * 0.04, y + pxCm * 0.03)
+    })
+  }
+  // Escala TOCO reimpresa cada 5 min, alternando mmHg/kPa
+  ctx.font = `${Math.round(pxCm * 0.08)}px system-ui`; ctx.textAlign = 'right'
+  for (let m = 5; m <= duration; m += 5) {
+    const xr = axisW + m * pxPerMin
+    const isKpa = (m / 5) % 2 === 1
+    const ticks = isKpa ? [2, 4, 6, 8, 10, 12] : [25, 50, 75, 100]
+    const unit  = isKpa ? 'kPa' : 'mmHg'
+    ticks.forEach(v => {
+      const y = tocoToPxL(isKpa ? v * 7.5 : v)
+      ctx.fillStyle = th.fhrLabelBox
+      ctx.fillRect(xr - pxCm * 0.22, y - pxCm * 0.06, pxCm * 0.2, pxCm * 0.12)
+      ctx.fillStyle = th.tocoLabel
+      ctx.fillText(String(v), xr - pxCm * 0.04, y + pxCm * 0.03)
+    })
+    ctx.fillStyle = th.fhrLabelBox
+    ctx.fillRect(xr - pxCm * 0.28, tocoBottom - pxCm * 0.11, pxCm * 0.26, pxCm * 0.1)
+    ctx.fillStyle = th.tocoLabel
+    ctx.fillText(unit, xr - pxCm * 0.04, tocoBottom - pxCm * 0.02)
+  }
+
+  // Banda intermedia (1 cm): velocidad de registro, "1 cm/min" cada 20 min
+  ctx.textAlign = 'center'
+  ctx.font = `bold ${Math.round(midH * 0.4)}px system-ui`; ctx.fillStyle = th.timeLabel
+  for (let m = 0; m <= duration; m += 20) {
+    const xr = axisW + m * pxPerMin + (m === 0 ? pxCm * 0.9 : 0)
+    ctx.fillText('1 cm/min', xr, midTop + midH * 0.63)
+  }
+
+  // Etiquetas de minuto (debajo de la banda TOCO)
+  ctx.fillStyle = th.timeLabel; ctx.font = `${Math.round(pxCm * 0.09)}px system-ui`; ctx.textAlign = 'center'
+  for (let m = 3; m <= duration; m += 3) ctx.fillText(m + "'", axisW + m * pxPerMin, canvasH - marginBottom * 0.25)
+
+  // TOCO (curva) — xSec mantiene el ruido/artefacto calibrado en "segundos"
+  // reales, independiente de la resolución de exportación.
+  const tocoPath: { v: number; lost: boolean }[] = []
+  for (let px = 0; px < contentW; px++) {
+    const t = px / pxPerMin
+    const xSec = t * 60
+    const tv = getTocoSegmentValues(tocoSegments, t)
+    let toco = tv.tone + tocoNoiseAt(xSec, tv.noise)
+    contractions.forEach(c => { toco += gaussian(t, c.time, c.duration * 0.48, c.amplitude) })
+    const lost = tv.artifact > 0 && tocoSignalLost(t, tv.artifact)
+    tocoPath.push({ v: clamp(toco, 0, 100), lost })
+  }
+  ctx.fillStyle = th.tocoFill
+  ctx.beginPath()
+  tocoPath.forEach((p, i) => { const x = axisW + i, y = tocoToPxL(p.v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y) })
+  ctx.lineTo(W, tocoBottom); ctx.lineTo(axisW, tocoBottom); ctx.closePath(); ctx.fill()
+  ctx.strokeStyle = th.toco; ctx.lineWidth = 1.5
+  ctx.beginPath()
+  let tocoPenDown = false
+  tocoPath.forEach((p, i) => {
+    const x = axisW + i
+    if (p.lost) { tocoPenDown = false; return }
+    const y = tocoToPxL(p.v)
+    if (!tocoPenDown) { ctx.moveTo(x, y); tocoPenDown = true } else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  // FCF (curva)
+  ctx.strokeStyle = th.fhr; ctx.lineWidth = th.fhrLineWidth
+  ctx.shadowColor = th.fhrGlow; ctx.shadowBlur = th.fhrGlowBlur
+  ctx.beginPath()
+  let penDown = false
+  for (let px = 0; px < contentW; px++) {
+    const t = px / pxPerMin
+    const xSec = t * 60
+    if (artifactLevel > 0 && signalLost(t, duration, artifactLevel, artifactExpulsive)) { penDown = false; continue }
+    const sv   = getSegmentValues(segments, t)
+    const v    = variabilityAt(xSec * 0.5, sv.varAmp, sv.stv)
+    const drop = decelDropAt(t, xSec, decels)
+    const rise = accelRiseAt(t, xSec, accels)
+    let fhr = drop > 15
+      ? sv.baseline - drop + hash(xSec * 0.9) * (sv.varAmp * 0.15)
+      : sv.baseline + v - drop + rise
+    if (artifactLevel > 0) fhr += artifactNoise(t, xSec, duration, artifactLevel, artifactExpulsive)
+    const x = axisW + px
+    const y = fhrToPxL(clamp(fhr, FHR_MIN, FHR_MAX))
+    if (!penDown) { ctx.moveTo(x, y); penDown = true }
+    else ctx.lineTo(x, y)
+  }
+  ctx.stroke()
+  ctx.shadowBlur = 0
+
+  return canvas
+}
+
+// ── PNG: incrustar DPI real (chunk pHYs) ──────────────────
+function crc32(buf: Uint8Array): number {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n++) {
+    let c = n
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+    table[n] = c >>> 0
+  }
+  let crc = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8)
+  return (crc ^ 0xFFFFFFFF) >>> 0
+}
+function addPhysChunk(pngBytes: Uint8Array, dpi: number): Uint8Array {
+  const pxPerMeter = Math.round(dpi / 0.0254)
+  const typeAndData = new Uint8Array(13)
+  typeAndData.set([0x70, 0x48, 0x59, 0x73], 0) // 'pHYs'
+  new DataView(typeAndData.buffer).setUint32(4, pxPerMeter, false)
+  new DataView(typeAndData.buffer).setUint32(8, pxPerMeter, false)
+  typeAndData[12] = 1 // unidad: metro
+  const crc = crc32(typeAndData)
+  const chunk = new Uint8Array(4 + 13 + 4)
+  new DataView(chunk.buffer).setUint32(0, 9, false) // longitud de datos = 9
+  chunk.set(typeAndData, 4)
+  new DataView(chunk.buffer).setUint32(17, crc, false)
+
+  const insertAt = 33 // firma PNG (8) + chunk IHDR completo (4+4+13+4=25)
+  const out = new Uint8Array(pngBytes.length + chunk.length)
+  out.set(pngBytes.subarray(0, insertAt), 0)
+  out.set(chunk, insertAt)
+  out.set(pngBytes.subarray(insertAt), insertAt + chunk.length)
+  return out
+}
+
 // ── Slider ────────────────────────────────────────────────
 function Slider({ label, value, min, max, step = 1, unit = '', onChange, color, note }: {
   label: string; value: number; min: number; max: number; step?: number
@@ -1032,9 +1245,20 @@ export default function App() {
     a.href = URL.createObjectURL(blob); a.download = 'trazado-ctg.json'; a.click()
   }
   const exportPNG = () => {
-    if (!canvasRef.current) return
-    const a = document.createElement('a')
-    a.href = canvasRef.current.toDataURL('image/png'); a.download = 'trazado-ctg.png'; a.click()
+    const exportCanvas = buildExportCanvas({
+      segments, accels, duration, decels, contractions,
+      activeSegTime: 0, artifactLevel, artifactExpulsive, paper: true,
+      tocoSegments, activeTocoSegTime: 0,
+    })
+    exportCanvas.toBlob(blob => {
+      if (!blob) return
+      blob.arrayBuffer().then(buf => {
+        const withDpi = addPhysChunk(new Uint8Array(buf), EXPORT_DPI)
+        const finalBlob = new Blob([withDpi], { type: 'image/png' })
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(finalBlob); a.download = 'trazado-ctg.png'; a.click()
+      })
+    }, 'image/png')
   }
 
   return (
