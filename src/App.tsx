@@ -758,16 +758,19 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
     ctx.fillText(unit, xr - 4, tocoBottom - 3)
   }
 
-  // Geometría del bloque de marca (logo + crédito), anclado al borde derecho
-  // DENTRO del ancho del trazado (no extiende el canvas), para calcular con
-  // qué "1 cm/min" repetido podría chocar antes de dibujar ninguno de los dos.
+  // Geometría del bloque de marca (logo + crédito), centrado entre los
+  // minutos 3 y 6 del trazado (min 4.5), con protección para no desbordar
+  // si la duración es muy corta. Se calcula antes del bucle de "1 cm/min"
+  // para saber con cuál repetición podría chocar.
   ctx.font = 'bold 7px system-ui'
   const brandLine1 = 'Generado con'
   const brandLine2 = 'CTG Creator'
   const brandTextW = Math.max(ctx.measureText(brandLine1).width, ctx.measureText(brandLine2).width)
   const logoSize   = Math.min(midH - 10, 18)
   const brandGap = 4, brandPad = 6
-  const logoX = gridEndX - brandPad - brandTextW - brandGap - logoSize
+  const blockW = logoSize + brandGap + brandTextW
+  const brandCenter = axisW + 4.5 * pxPerMin
+  const logoX = Math.max(axisW + 4, Math.min(brandCenter - blockW / 2, gridEndX - blockW - 4))
   const brandTextX = logoX + logoSize + brandGap
   const logoY = midTop + (midH - logoSize) / 2
 
@@ -777,7 +780,7 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
   ctx.font = 'bold 11px system-ui'; ctx.fillStyle = th.timeLabel
   for (let m = 0; m <= duration; m += 20) {
     const xr = axisW + m * pxPerMin + (m === 0 ? pxCm * 0.9 : 0)
-    if (xr > logoX - 10) continue // evita chocar con el bloque de marca
+    if (xr > logoX - 10 && xr < logoX + blockW + 10) continue // evita chocar con el bloque de marca
     ctx.fillText('1 cm/min', xr, midTop + midH * 0.63)
   }
 
