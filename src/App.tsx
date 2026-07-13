@@ -64,6 +64,7 @@ interface Segment {
   baseline: number
   varAmp: number   // amplitud pico-a-valle de variabilidad, en lpm (se lee en la graduación)
   stv: number      // textura / STV a corto plazo: 0 = liso (sinusoidal) … 1 = dentado (saltatorio)
+  artifact: number // 0–100, intensidad de pérdida real de señal (pen-up) desde este tramo
 }
 interface Decel {
   type: 'variable' | 'variableComplicated' | 'variableShoulders' | 'late' | 'early' | 'prolonged'
@@ -99,8 +100,6 @@ interface CTGConfig {
   decels: Decel[]
   contractions: Contraction[]
   activeSegTime: number
-  artifactLevel: number      // 0–100, intensidad de pérdida de señal / artefacto FCF
-  artifactExpulsive: boolean // concentrar el artefacto FCF hacia el expulsivo (final)
   paper: boolean             // estilo papel real (true) o pantalla oscura (false)
   tocoSegments: TocoSegment[]
   activeTocoSegTime: number
@@ -177,7 +176,7 @@ function getSegmentValues(segments: Segment[], t: number) {
   }
   const cur  = segments[idx]
   const next = segments[idx + 1]
-  if (!next) return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv }
+  if (!next) return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv, artifact: cur.artifact ?? 0 }
   const transStart = next.time - TRANSITION_MIN
   if (t >= transStart) {
     const p = smoothstep(0, 1, (t - transStart) / TRANSITION_MIN)
@@ -185,9 +184,10 @@ function getSegmentValues(segments: Segment[], t: number) {
       baseline: lerp(cur.baseline, next.baseline, p),
       varAmp:   lerp(cur.varAmp, next.varAmp, p),
       stv:      lerp(cur.stv ?? 0.35, next.stv ?? 0.35, p),
+      artifact: lerp(cur.artifact ?? 0, next.artifact ?? 0, p),
     }
   }
-  return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv ?? 0.35 }
+  return { baseline: cur.baseline, varAmp: cur.varAmp, stv: cur.stv ?? 0.35, artifact: cur.artifact ?? 0 }
 }
 
 // ── TOCO segment interpolation (tono/ruido/artefacto por tramo) ──
@@ -410,33 +410,26 @@ function accelRiseAt(t: number, x: number, accels: Accel[]) {
 }
 
 // ── Artefacto / pérdida de señal ──────────────────────────
-// Modela la pérdida de contacto típica del registro real (la madre se mueve,
-// sobre todo en el expulsivo). Determinista (sin Math.random), reproducible.
-function signalLost(t: number, duration: number, level: number, expulsive: boolean) {
+// Modela la pérdida de contacto típica del registro real (la madre se mueve).
+// Intensidad por punto de quiebre (0-100, ver Segment.artifact / TocoSegment.artifact):
+// escala puramente multiplicativa (sin piso aditivo) para que 0% sea trazo
+// perfectamente limpio y 100% deje el trazado casi ilegible (~88% de pérdida).
+// Determinista (sin Math.random), reproducible.
+function signalLost(t: number, level: number) {
   if (level <= 0) return false
-  let p = level / 100
-  if (expulsive) {
-    const knee = duration * 0.6
-    p *= t < knee ? 0.1 : 0.1 + 0.9 * smoothstep(knee, duration, t)
-  } else {
-    p *= 0.5
-  }
+  const p = level / 100
   // zonas "malas" cada ~15 s; solo algunas se degradan
   const zone = hash(Math.floor(t * 4) * 0.13) + 0.5
-  if (zone > 0.35 + 0.65 * p) return false
+  if (zone > 0.94 * p) return false
   // dentro de una zona mala, huecos en sub-tramos de ~2.5 s
   const sub = hash(Math.floor(t * 24) * 1.7) + 0.5
-  return sub < 0.4 + 0.6 * p
+  return sub < 0.94 * p
 }
-function artifactNoise(t: number, x: number, duration: number, level: number, expulsive: boolean) {
-  let p = level / 100
-  if (expulsive) {
-    const knee = duration * 0.6
-    p *= t < knee ? 0.15 : 0.15 + 0.85 * smoothstep(knee, duration, t)
-  }
+function artifactNoise(t: number, x: number, level: number) {
+  const p = level / 100
   let n = hash(x * 1.3) * 3 * p              // ruido leve continuo
   const zone = hash(Math.floor(t * 4) * 0.13) + 0.5
-  if (zone < 0.35 + 0.65 * p) {             // spikes ocasionales en zonas malas
+  if (zone < 0.94 * p) {                     // spikes ocasionales en zonas malas
     const spike = hash(x * 2.7)
     if (Math.abs(spike) > 0.42) n += spike * 18 * p
   }
@@ -459,14 +452,14 @@ function tocoSignalLost(t: number, level: number) {
   if (level <= 0) return false
   const p = level / 100
   const zone = hash(Math.floor(t * 3) * 0.19) + 0.5
-  if (zone > 0.3 + 0.6 * p) return false
+  if (zone > 0.94 * p) return false
   const sub = hash(Math.floor(t * 20) * 1.3) + 0.5
-  return sub < 0.35 + 0.55 * p
+  return sub < 0.94 * p
 }
 
 // ── Draw CTG ──────────────────────────────────────────────
 function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
-  const { segments, accels, duration, decels, contractions, activeSegTime, artifactLevel, artifactExpulsive, paper, tocoSegments, activeTocoSegTime } = config
+  const { segments, accels, duration, decels, contractions, activeSegTime, paper, tocoSegments, activeTocoSegTime } = config
   const th = theme(paper)
   const W = Math.round(duration * PX_PER_MIN)
   canvas.width  = W
@@ -607,19 +600,20 @@ function drawCTG(canvas: HTMLCanvasElement, config: CTGConfig) {
   let penDown = false
   for (let x = 0; x < W; x++) {
     const t    = x / PX_PER_MIN
-    // artefacto: pérdida de señal → se interrumpe el trazo (pen-up)
-    if (artifactLevel > 0 && signalLost(t, duration, artifactLevel, artifactExpulsive)) {
+    const sv   = getSegmentValues(segments, t)
+    // artefacto: pérdida de señal → se interrumpe el trazo (pen-up), intensidad
+    // heredada del punto de quiebre FCF activo en este instante
+    if (sv.artifact > 0 && signalLost(t, sv.artifact)) {
       penDown = false
       continue
     }
-    const sv   = getSegmentValues(segments, t)
     const v    = variabilityAt(x * 0.5, sv.varAmp, sv.stv)
     const drop = decelDropAt(t, x, decels)
     const rise = accelRiseAt(t, x, accels)
     let fhr = drop > 15
       ? sv.baseline - drop + hash(x * 0.9) * (sv.varAmp * 0.15)
       : sv.baseline + v - drop + rise
-    if (artifactLevel > 0) fhr += artifactNoise(t, x, duration, artifactLevel, artifactExpulsive)
+    if (sv.artifact > 0) fhr += artifactNoise(t, x, sv.artifact)
     const y = fhrToPx(clamp(fhr, FHR_MIN, FHR_MAX))
     if (!penDown) { ctx.moveTo(x, y); penDown = true }
     else ctx.lineTo(x, y)
@@ -653,7 +647,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> {
-  const { segments, accels, duration, decels, contractions, artifactLevel, artifactExpulsive, tocoSegments } = config
+  const { segments, accels, duration, decels, contractions, tocoSegments } = config
   const th = theme(true) // siempre estilo papel: pensado para imprimir
 
   const pxCm = EXPORT_PX_CM
@@ -836,15 +830,15 @@ async function buildExportCanvas(config: CTGConfig): Promise<HTMLCanvasElement> 
   for (let px = 0; px < contentW; px++) {
     const t = px / pxPerMin
     const xSec = t * 60
-    if (artifactLevel > 0 && signalLost(t, duration, artifactLevel, artifactExpulsive)) { penDown = false; continue }
     const sv   = getSegmentValues(segments, t)
+    if (sv.artifact > 0 && signalLost(t, sv.artifact)) { penDown = false; continue }
     const v    = variabilityAt(xSec * 0.5, sv.varAmp, sv.stv)
     const drop = decelDropAt(t, xSec, decels)
     const rise = accelRiseAt(t, xSec, accels)
     let fhr = drop > 15
       ? sv.baseline - drop + hash(xSec * 0.9) * (sv.varAmp * 0.15)
       : sv.baseline + v - drop + rise
-    if (artifactLevel > 0) fhr += artifactNoise(t, xSec, duration, artifactLevel, artifactExpulsive)
+    if (sv.artifact > 0) fhr += artifactNoise(t, xSec, sv.artifact)
     const x = axisW + px
     const y = fhrToPxL(clamp(fhr, FHR_MIN, FHR_MAX))
     if (!penDown) { ctx.moveTo(x, y); penDown = true }
@@ -1175,14 +1169,12 @@ let nextId = 1
 let nextTocoId = 1
 
 export default function App() {
-  const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 12, stv: 0.35 }])
+  const [segments,      setSegments]      = useState<Segment[]>([{ id: 0, time: 0, baseline: 140, varAmp: 12, stv: 0.35, artifact: 0 }])
   const [activeSegId,   setActiveSegId]   = useState(0)
   const [accels,        setAccels]        = useState<Accel[]>([])
   const [duration,      setDuration]      = useState(20)
   const [decels,        setDecels]        = useState<Decel[]>([])
   const [contractions,  setContractions]  = useState<Contraction[]>([])
-  const [artifactLevel,     setArtifactLevel]     = useState(0)
-  const [artifactExpulsive, setArtifactExpulsive] = useState(true)
   const [tocoSegments,    setTocoSegments]    = useState<TocoSegment[]>([{ id: 0, time: 0, tone: 10, noise: 35, artifact: 0 }])
   const [activeTocoSegId, setActiveTocoSegId] = useState(0)
   const [paper,         setPaper]         = useState(true)
@@ -1208,10 +1200,10 @@ export default function App() {
     drawCTG(canvasRef.current, {
       segments, accels, duration, decels, contractions,
       activeSegTime: activeSeg?.time ?? 0,
-      artifactLevel, artifactExpulsive, paper,
+      paper,
       tocoSegments, activeTocoSegTime: activeTocoSeg?.time ?? 0,
     })
-  }, [segments, accels, duration, decels, contractions, activeSegId, artifactLevel, artifactExpulsive, paper, tocoSegments, activeTocoSegId])
+  }, [segments, accels, duration, decels, contractions, activeSegId, paper, tocoSegments, activeTocoSegId])
 
   const updateSeg = (field: keyof Segment, value: number) => {
     setSegments(prev => prev.map(s => s.id === activeSegId ? { ...s, [field]: value } : s))
@@ -1266,6 +1258,7 @@ export default function App() {
       baseline: Math.round(inherited.baseline),
       varAmp:   Math.round(inherited.varAmp * 10) / 10,
       stv:      inherited.stv,
+      artifact: Math.round(inherited.artifact),
     }
     setSegments(prev => [...prev, newSeg].sort((a, b) => a.time - b.time))
     setActiveSegId(newSeg.id)
@@ -1286,7 +1279,6 @@ export default function App() {
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify({
       segments, accels, duration, decels, contractions,
-      artifact: { level: artifactLevel, expulsive: artifactExpulsive },
       tocoSegments,
     }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -1295,7 +1287,7 @@ export default function App() {
   const exportPNG = async () => {
     const exportCanvas = await buildExportCanvas({
       segments, accels, duration, decels, contractions,
-      activeSegTime: 0, artifactLevel, artifactExpulsive, paper: true,
+      activeSegTime: 0, paper: true,
       tocoSegments, activeTocoSegTime: 0,
     })
     exportCanvas.toBlob(blob => {
@@ -1359,17 +1351,6 @@ export default function App() {
             <Slider label="Duración" value={duration} min={5} max={40} unit="min" onChange={setDuration} />
             <Toggle label="Papel real (impresión)" value={paper} onChange={setPaper} />
 
-            <SectionTitle color="#f59e0b">Artefacto / pérdida de señal</SectionTitle>
-            <Slider
-              label="Intensidad" value={artifactLevel}
-              min={0} max={100} step={5} unit="%"
-              color={artifactLevel === 0 ? '#475569' : '#f59e0b'}
-              note={artifactLevel === 0 ? 'Limpio' : artifactLevel <= 30 ? 'Leve' : artifactLevel <= 60 ? 'Moderado' : 'Marcado'}
-              onChange={setArtifactLevel}
-            />
-            <Toggle label="Concentrar en expulsivo" value={artifactExpulsive} onChange={setArtifactExpulsive} />
-            <p className="text-[10px] -mt-1 mb-1" style={{ color: U.textFaint }}>Simula la pérdida de contacto real (movimiento materno, pujo)</p>
-
             <SectionTitle color={U.accent}>Puntos de quiebre ({segments.length})</SectionTitle>
             <p className="text-[10px] -mt-2 mb-2" style={{ color: U.textFaint }}>Haz clic en el trazado para agregar</p>
 
@@ -1394,11 +1375,14 @@ export default function App() {
                     >×</button>
                   )}
                 </div>
-                <div className="flex gap-3 mt-1">
+                <div className="flex gap-3 mt-1 flex-wrap">
                   <span className="text-[10px]" style={{ color: '#6EE7FF' }}>FCF {seg.baseline} lpm</span>
                   <span className="text-[10px]" style={{ color: varColor(seg.varAmp) }}>
                     Var. {seg.varAmp} lpm · {varLabel(seg.varAmp)}
                   </span>
+                  {(seg.artifact ?? 0) > 0 && (
+                    <span className="text-[10px]" style={{ color: '#f59e0b' }}>Artef. {seg.artifact}%</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -1430,6 +1414,13 @@ export default function App() {
                   color="#38bdf8"
                   note={stvLabel(activeSeg.stv ?? 0.35)}
                   onChange={v => updateSeg('stv', v / 100)}
+                />
+                <Slider
+                  label="Artefacto (pérdida de señal)" value={activeSeg.artifact ?? 0}
+                  min={0} max={100} step={5} unit="%"
+                  color={(activeSeg.artifact ?? 0) === 0 ? '#475569' : '#f59e0b'}
+                  note={(activeSeg.artifact ?? 0) === 0 ? 'Limpio' : (activeSeg.artifact ?? 0) <= 30 ? 'Leve' : (activeSeg.artifact ?? 0) <= 60 ? 'Moderado' : (activeSeg.artifact ?? 0) < 100 ? 'Marcado' : 'Casi ilegible'}
+                  onChange={v => updateSeg('artifact', v)}
                 />
               </div>
             )}
@@ -1545,7 +1536,7 @@ export default function App() {
                 <Slider
                   label="Artefacto (pérdida de señal)" value={activeTocoSeg.artifact}
                   min={0} max={100} step={5} unit="%" color="#f59e0b"
-                  note={activeTocoSeg.artifact === 0 ? 'Limpio' : activeTocoSeg.artifact <= 40 ? 'Leve' : activeTocoSeg.artifact <= 70 ? 'Moderado' : 'Marcado'}
+                  note={activeTocoSeg.artifact === 0 ? 'Limpio' : activeTocoSeg.artifact <= 40 ? 'Leve' : activeTocoSeg.artifact <= 70 ? 'Moderado' : activeTocoSeg.artifact < 100 ? 'Marcado' : 'Casi ilegible'}
                   onChange={v => updateTocoSeg('artifact', v)}
                 />
               </div>
