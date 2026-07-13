@@ -438,15 +438,22 @@ function artifactNoise(t: number, x: number, level: number) {
 
 // ── TOCO: ruido de línea y artefacto ──────────────────────
 // La traza de TOCO real nunca es perfectamente lisa: hay un temblor fino
-// continuo (tono uterino inquieto, respiración materna) que `tocoNoiseAt`
-// reproduce mezclando dos frecuencias de hash. `tocoSignalLost` modela
-// pérdida real de señal del transductor externo (se despega/mueve el
-// cinturón) igual que `signalLost` para la FCF: el trazo se interrumpe
-// (pen-up) en vez de solo añadir ruido.
+// continuo (tono uterino inquieto, respiración materna) más picos altos
+// ocasionales (roce/golpe del cinturón) que `tocoNoiseAt` reproduce como
+// dos componentes independientes, cada uno escalado puramente desde 0 (sin
+// piso aditivo) para que 0% sea línea lisa y 100% muestre picos marcados,
+// claramente visibles sobre la escala 0-100 de la banda. `tocoSignalLost`
+// modela aparte la pérdida real de señal del transductor externo (se
+// despega/mueve el cinturón) igual que `signalLost` para la FCF: el trazo
+// se interrumpe (pen-up) en vez de solo añadir ruido.
 const tocoNoiseAt = (x: number, amt: number) => {
+  const p = amt / 100
   const n1 = hash(x * 0.05) * 1.5
   const n2 = hash(x * 0.37) * 0.7
-  return (n1 + n2) * (amt / 40)
+  let n = (n1 + n2) * 3 * p                       // temblor fino continuo
+  const spike = hash(x * 2.7)
+  if (Math.abs(spike) > 0.38) n += spike * 30 * p // picos altos ocasionales
+  return n
 }
 function tocoSignalLost(t: number, level: number) {
   if (level <= 0) return false
