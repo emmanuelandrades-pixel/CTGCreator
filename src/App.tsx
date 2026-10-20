@@ -67,14 +67,20 @@ interface Segment {
   artifact: number // 0–100, intensidad de pérdida real de señal (pen-up) desde este tramo
 }
 interface Decel {
-  type: 'variable' | 'variableComplicated' | 'variableShoulders' | 'late' | 'early' | 'prolonged'
+  type: 'variable' | 'variableComplicated' | 'variableComplicatedDuration' | 'variableComplicatedDepth'
+      | 'variableComplicatedAmplitude' | 'variableShoulders' | 'late' | 'early' | 'prolonged'
   time: number
   depth: number
   duration: number
-  onset?: number    // solo 'variable': tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
-  recovery?: number // solo 'variable': tiempo de recuperación (nadir→basal) en segundos, sin límite de "abrupta"
+  onset?: number    // 'variable'/complicadas/hombros: tiempo de caída (onset→nadir) en segundos, máx 29 ("caída abrupta")
+                     // 'early'/'late': tiempo de caída en segundos, sin el límite de 29 (no son barorreceptoras)
+  recovery?: number // tiempo de recuperación (nadir→basal) en segundos — incluye 'early'/'late'
   preShoulder?: number  // solo 'variableShoulders': amplitud del hombro previo, en lpm (15-30)
   postShoulder?: number // solo 'variableShoulders': amplitud del hombro posterior, en lpm (0-30)
+  // 'variableComplicated(Duration|Depth|Amplitude)' son la misma morfología (nadir bifásico) —
+  // solo difieren en qué valor por defecto se precarga al elegirlas, según cuál de los 3 criterios
+  // de la "regla de los 60" (duración ≥60s / nadir ≤60 lpm / amplitud ≥60 lpm) se quiere demostrar.
+  // 'variableComplicated' (sin sufijo) se mantiene como alias por compatibilidad con JSON antiguos.
 }
 interface Accel {
   time: number      // minuto de inicio
@@ -212,6 +218,42 @@ function getTocoSegmentValues(tocoSegments: TocoSegment[], t: number) {
   return { tone: cur.tone, noise: cur.noise, artifact: cur.artifact }
 }
 
+// ── Valores por defecto al crear o cambiar el tipo de una desaceleración ──
+// "Por defecto" = se precarga este valor al elegir el tipo, pero sigue
+// siendo editable después (no queda bloqueado). El vínculo con la
+// contracción es solo al momento del cambio de tipo, no un enlace vivo:
+// si luego mueves esa contracción, esta desaceleración ya creada no la sigue.
+function computeDecelTypeDefaults(
+  newType: Decel['type'], current: Decel, index: number,
+  decels: Decel[], contractions: Contraction[], segments: Segment[]
+): Partial<Decel> {
+  if (newType === 'early' || newType === 'late') {
+    // Enganche por posición: la N-ésima precoz/tardía (contando solo las de
+    // su mismo tipo que ya existan antes que ella en la lista) se alinea con
+    // la N-ésima contracción. Precoz → nadir coincide con el acmé. Tardía
+    // (quimiorreceptora) → nadir 1 min después del acmé. Con caída y
+    // recuperación por defecto de 1 min cada una, el inicio queda en
+    // (nadir − 1 min).
+    const rank = decels.slice(0, index).filter(d => d.type === newType).length
+    const c = contractions[rank]
+    const overrides: Partial<Decel> = { duration: 120 }
+    if (c) {
+      const nadirTime = newType === 'early' ? c.time : c.time + 1
+      overrides.time = Math.max(0.1, parseFloat((nadirTime - 1).toFixed(2)))
+    }
+    return overrides
+  }
+  if (newType === 'prolonged') return { duration: 180 }
+  if (newType === 'variableComplicatedDuration') return { duration: 90 }
+  if (newType === 'variableComplicatedDepth') {
+    // Nadir absoluto en 60 lpm: profundidad = basal vigente en ese punto − 60.
+    const sv = getSegmentValues(segments, current.time)
+    return { depth: clamp(Math.round(sv.baseline - 60), 10, 90) }
+  }
+  if (newType === 'variableComplicatedAmplitude') return { depth: 80 }
+  return {}
+}
+
 // ── Waveform utils ────────────────────────────────────────
 // Modelo de variabilidad de dos componentes, calibrado contra papel real (1 cm/min):
 //   - slow  = ondulación lenta (variabilidad a largo plazo, LTV)
@@ -286,12 +328,17 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         contrib = -Math.min(9, depth * 0.12) * Math.sin(Math.PI * p)
       }
 
-    } else if (d.type === 'variableComplicated') {
+    } else if (d.type === 'variableComplicated' || d.type === 'variableComplicatedDuration'
+            || d.type === 'variableComplicatedDepth' || d.type === 'variableComplicatedAmplitude') {
       // Variable complicada: nadir bifásico (cae, rebote parcial, cae de nuevo)
       // + recuperación lenta, calibrado contra 1016 Ep.B (min 56.6-58.1) y 1024
       // Ventana 2 (min 61-62.7). Mismo onset abrupto que la simple, pero el
       // "plateau" tiene dos valles con un rebote parcial (no completo) entre
       // ellos, y por defecto una recuperación más lenta.
+      // Las 3 variantes con sufijo (Duration/Depth/Amplitude) son esta MISMA
+      // morfología — solo cambia qué valor por defecto trae precargado cada
+      // una, para demostrar uno de los 3 criterios de la "regla de los 60"
+      // (duración ≥60s / nadir ≤60 lpm / amplitud ≥60 lpm). Ver computeDecelTypeDefaults.
       const onsetRamp = Math.min(d.onset ?? 10, 29) / 60
       const recovRamp = Math.min(d.recovery ?? 25, 45) / 60
       const overshootW = 14 / 60
@@ -366,15 +413,25 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
         contrib = -postAmp * Math.sin(Math.PI * p)
       }
 
-    } else if (d.type === 'late') {
-      const lag = 30 / 60
-      const s = startT + lag, e = endT + lag, mid = s + (e - s) / 2
-      if (t >= s && t < mid)  contrib = smoothstep(0, 1, (t - s) / (mid - s)) * depth
-      else if (t >= mid && t <= e) contrib = smoothstep(0, 1, (e - t) / (e - mid)) * depth
-
-    } else if (d.type === 'early') {
-      if (t >= startT && t <= endT)
-        contrib = Math.sin(((t - startT) / durMin) * Math.PI) * depth
+    } else if (d.type === 'late' || d.type === 'early') {
+      // Tardía (quimiorreceptora) y precoz (espejo) comparten la misma forma —
+      // caída suave de 1 min + recuperación suave de 1 min por defecto (editable),
+      // con una meseta intermedia si la duración total configurada es mayor a
+      // onset+recovery. La única diferencia clínica entre ambas es DÓNDE cae el
+      // nadir respecto del acmé de la contracción asociada — eso se resuelve al
+      // crear/cambiar el tipo (ver computeDecelTypeDefaults), fijando el `time`
+      // de inicio; acá solo se dibuja la forma ya posicionada.
+      const onsetRamp = Math.min(d.onset ?? 60, 180) / 60
+      const recovRamp = Math.min(d.recovery ?? 60, 180) / 60
+      const plateauStart = startT + onsetRamp
+      const plateauEnd = endT - recovRamp
+      if (t >= startT && t < plateauStart) {
+        contrib = smoothstep(0, 1, (t - startT) / onsetRamp) * depth
+      } else if (t >= plateauStart && t < plateauEnd) {
+        contrib = depth + hash(x * 0.2 + seed) * depth * 0.05
+      } else if (t >= plateauEnd && t <= endT) {
+        contrib = smoothstep(0, 1, (endT - t) / recovRamp) * depth
+      }
 
     } else if (d.type === 'prolonged') {
       const ramp = 0.25
@@ -966,10 +1023,18 @@ function SectionTitle({ children, color }: { children: React.ReactNode; color?: 
 }
 
 // ── DecelCard ─────────────────────────────────────────────
-function DecelCard({ decel, index, onChange, onRemove, onDuplicate }: {
-  decel: Decel; index: number; onChange: (d: Decel) => void; onRemove: () => void; onDuplicate: () => void
+function DecelCard({ decel, index, decels, contractions, segments, onChange, onRemove, onDuplicate }: {
+  decel: Decel; index: number; decels: Decel[]; contractions: Contraction[]; segments: Segment[]
+  onChange: (d: Decel) => void; onRemove: () => void; onDuplicate: () => void
 }) {
   const U = useUI()
+  const changeType = (newType: Decel['type']) => {
+    const defaults = computeDecelTypeDefaults(newType, decel, index, decels, contractions, segments)
+    // onset/recovery se resetean a "sin definir" en cada cambio de tipo para que
+    // el valor por defecto de caída/recuperación del tipo nuevo se muestre bien
+    // (si no, el valor explícito que trae el botón "+ Agregar" se quedaba pegado).
+    onChange({ ...decel, onset: undefined, recovery: undefined, type: newType, ...defaults })
+  }
   return (
     <div className="rounded-lg p-3 mb-2 border" style={{ background: U.cardBg, borderColor: U.borderStrong }}>
       <div className="flex items-center justify-between mb-2">
@@ -988,16 +1053,18 @@ function DecelCard({ decel, index, onChange, onRemove, onDuplicate }: {
         <label className="text-[10px] block mb-1" style={{ color: U.textFaint }}>Tipo</label>
         <select
           value={decel.type}
-          onChange={ev => onChange({ ...decel, type: ev.target.value as Decel['type'] })}
+          onChange={ev => changeType(ev.target.value as Decel['type'])}
           className="w-full text-xs rounded-md px-2 py-1.5 outline-none border"
           style={{ background: U.selectBg, borderColor: U.inputBorder, color: U.inputText }}
         >
           <option value="variable">Barorreceptora simple</option>
-          <option value="variableComplicated">Barorreceptora complicada (nadir bifásico)</option>
+          <option value="variableComplicatedDuration">Barorreceptora complicada — duración ≥60s (regla de los 60)</option>
+          <option value="variableComplicatedDepth">Barorreceptora complicada — nadir ≤60 lpm (regla de los 60)</option>
+          <option value="variableComplicatedAmplitude">Barorreceptora complicada — amplitud ≥60 lpm (regla de los 60)</option>
           <option value="variableShoulders">Barorreceptora con hombros</option>
-          <option value="late">Tardía (quimiorreceptora)</option>
-          <option value="early">Precoz (espejo)</option>
-          <option value="prolonged">Prolongada (&gt; 2 min)</option>
+          <option value="late">Tardía (quimiorreceptora) — nadir 1 min después del acmé</option>
+          <option value="early">Precoz (espejo) — nadir coincide con el acmé</option>
+          <option value="prolonged">Prolongada (3 min)</option>
         </select>
       </div>
       <div className="grid grid-cols-3 gap-2">
@@ -1005,21 +1072,28 @@ function DecelCard({ decel, index, onChange, onRemove, onDuplicate }: {
         <NumberInput label="Profund. (lpm)"  value={decel.depth}    min={10}  max={90}  step={5}   onChange={v => onChange({ ...decel, depth: v })} />
         <NumberInput label="Duración (seg)"  value={decel.duration} min={15}  max={300} step={5}   onChange={v => onChange({ ...decel, duration: v })} />
       </div>
-      {(decel.type === 'variable' || decel.type === 'variableComplicated' || decel.type === 'variableShoulders') && (() => {
-        const defOnset = decel.type === 'variableComplicated' ? 10 : 8
-        const defRecov = decel.type === 'variableComplicated' ? 25 : 12
+      {(decel.type === 'variable' || decel.type === 'variableComplicated' || decel.type === 'variableComplicatedDuration'
+        || decel.type === 'variableComplicatedDepth' || decel.type === 'variableComplicatedAmplitude'
+        || decel.type === 'variableShoulders' || decel.type === 'early' || decel.type === 'late') && (() => {
+        const isComplicated = decel.type === 'variableComplicated' || decel.type === 'variableComplicatedDuration'
+          || decel.type === 'variableComplicatedDepth' || decel.type === 'variableComplicatedAmplitude'
+        const isEarlyLate = decel.type === 'early' || decel.type === 'late'
+        const defOnset = isEarlyLate ? 60 : isComplicated ? 10 : 8
+        const defRecov = isEarlyLate ? 60 : isComplicated ? 25 : 12
+        const onsetMax = isEarlyLate ? 180 : 29
+        const recovMax = isEarlyLate ? 180 : 45
         return (
           <div className="mt-2">
             <Slider
               label="Tiempo de caída (onset→nadir)" value={decel.onset ?? defOnset}
-              min={2} max={29} step={1} unit="s" color={U.accent}
-              note="abrupta: <30s"
+              min={2} max={onsetMax} step={1} unit="s" color={U.accent}
+              note={isEarlyLate ? undefined : 'abrupta: <30s'}
               onChange={v => onChange({ ...decel, onset: v })}
             />
             <Slider
               label="Tiempo de recuperación (nadir→basal)" value={decel.recovery ?? defRecov}
-              min={3} max={45} step={1} unit="s" color={U.accent}
-              note={(decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
+              min={3} max={recovMax} step={1} unit="s" color={U.accent}
+              note={isEarlyLate ? undefined : (decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
               onChange={v => onChange({ ...decel, recovery: v })}
             />
             {decel.type === 'variableShoulders' && (
@@ -1460,7 +1534,7 @@ export default function App() {
           <div className="flex-1 px-3.5 py-3">
             {decels.map((d, i) => (
               <DecelCard
-                key={i} decel={d} index={i}
+                key={i} decel={d} index={i} decels={decels} contractions={contractions} segments={segments}
                 onChange={v => setDecels(prev => prev.map((x, j) => j === i ? v : x))}
                 onRemove={() => setDecels(prev => prev.filter((_, j) => j !== i))}
                 onDuplicate={() => setDecels(prev => {
