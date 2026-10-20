@@ -415,14 +415,15 @@ function decelDropAt(t: number, x: number, decels: Decel[]) {
 
     } else if (d.type === 'late' || d.type === 'early') {
       // Tardía (quimiorreceptora) y precoz (espejo) comparten la misma forma —
-      // caída suave de 1 min + recuperación suave de 1 min por defecto (editable),
-      // con una meseta intermedia si la duración total configurada es mayor a
-      // onset+recovery. La única diferencia clínica entre ambas es DÓNDE cae el
-      // nadir respecto del acmé de la contracción asociada — eso se resuelve al
-      // crear/cambiar el tipo (ver computeDecelTypeDefaults), fijando el `time`
-      // de inicio; acá solo se dibuja la forma ya posicionada.
-      const onsetRamp = Math.min(d.onset ?? 60, 180) / 60
-      const recovRamp = Math.min(d.recovery ?? 60, 180) / 60
+      // SIEMPRE simétrica: caída y recuperación valen cada una la mitad de la
+      // duración total configurada (sin meseta intermedia posible, a propósito,
+      // para que editar "Duración" nunca desarme la simetría). La única
+      // diferencia clínica entre ambas es DÓNDE cae el nadir respecto del acmé
+      // de la contracción asociada — eso se resuelve al crear/cambiar el tipo
+      // (ver computeDecelTypeDefaults), fijando el `time` de inicio; acá solo
+      // se dibuja la forma ya posicionada.
+      const onsetRamp = durMin / 2
+      const recovRamp = durMin / 2
       const plateauStart = startT + onsetRamp
       const plateauEnd = endT - recovRamp
       if (t >= startT && t < plateauStart) {
@@ -1072,28 +1073,31 @@ function DecelCard({ decel, index, decels, contractions, segments, onChange, onR
         <NumberInput label="Profund. (lpm)"  value={decel.depth}    min={10}  max={90}  step={5}   onChange={v => onChange({ ...decel, depth: v })} />
         <NumberInput label="Duración (seg)"  value={decel.duration} min={15}  max={300} step={5}   onChange={v => onChange({ ...decel, duration: v })} />
       </div>
+      {(decel.type === 'early' || decel.type === 'late') && (
+        <p className="text-[10px] mt-1 mb-2" style={{ color: U.textFaint }}>
+          Caída y recuperación: <b style={{ color: U.text }}>{Math.round(decel.duration / 2)} s</b> cada una
+          (siempre la mitad de la duración total, para mantener la forma simétrica — cambia "Duración" para ajustarlas)
+        </p>
+      )}
       {(decel.type === 'variable' || decel.type === 'variableComplicated' || decel.type === 'variableComplicatedDuration'
         || decel.type === 'variableComplicatedDepth' || decel.type === 'variableComplicatedAmplitude'
-        || decel.type === 'variableShoulders' || decel.type === 'early' || decel.type === 'late') && (() => {
+        || decel.type === 'variableShoulders') && (() => {
         const isComplicated = decel.type === 'variableComplicated' || decel.type === 'variableComplicatedDuration'
           || decel.type === 'variableComplicatedDepth' || decel.type === 'variableComplicatedAmplitude'
-        const isEarlyLate = decel.type === 'early' || decel.type === 'late'
-        const defOnset = isEarlyLate ? 60 : isComplicated ? 10 : 8
-        const defRecov = isEarlyLate ? 60 : isComplicated ? 25 : 12
-        const onsetMax = isEarlyLate ? 180 : 29
-        const recovMax = isEarlyLate ? 180 : 45
+        const defOnset = isComplicated ? 10 : 8
+        const defRecov = isComplicated ? 25 : 12
         return (
           <div className="mt-2">
             <Slider
               label="Tiempo de caída (onset→nadir)" value={decel.onset ?? defOnset}
-              min={2} max={onsetMax} step={1} unit="s" color={U.accent}
-              note={isEarlyLate ? undefined : 'abrupta: <30s'}
+              min={2} max={29} step={1} unit="s" color={U.accent}
+              note="abrupta: <30s"
               onChange={v => onChange({ ...decel, onset: v })}
             />
             <Slider
               label="Tiempo de recuperación (nadir→basal)" value={decel.recovery ?? defRecov}
-              min={3} max={recovMax} step={1} unit="s" color={U.accent}
-              note={isEarlyLate ? undefined : (decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
+              min={3} max={45} step={1} unit="s" color={U.accent}
+              note={(decel.recovery ?? defRecov) > 30 ? 'sin límite (>30s ok)' : undefined}
               onChange={v => onChange({ ...decel, recovery: v })}
             />
             {decel.type === 'variableShoulders' && (
